@@ -225,6 +225,13 @@ cd backend
 DCG_SIMULATION=true .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+**Atajo: `./run.sh`** hace los pasos 2 a 5 con un solo comando. Comprueba el venv, instala
+solo las dependencias que falten, migra la base de datos y carga la semilla solo si la BD está
+vacía. Si no hay administrador, ofrece crearlo. Después arranca el backend y espera a que
+responda `/api/v1/health`. Por defecto arranca en simulación; `Ctrl+C` lo detiene todo y una
+segunda ejecución simultánea se rechaza. Opciones: `--port N`, `--lan` (para el ESP32 físico),
+`--real` (InsightFace real), `--reload` y `--help`.
+
 - Aplicación web: <http://localhost:8000>. Inicia sesión con el administrador creado.
 - API interactiva: <http://localhost:8000/docs>
 - Salud del servicio: <http://localhost:8000/api/v1/health>
