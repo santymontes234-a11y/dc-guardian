@@ -1,0 +1,8 @@
+{
+  "name": "dcg_core",
+  "version": "1.0.0",
+  "description": "DC Guardian: lógica pura del firmware (sin dependencias de Arduino), probada en el PC.",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": { "flags": ["-std=gnu++17"] }
+}
