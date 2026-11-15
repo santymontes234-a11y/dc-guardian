@@ -10,15 +10,62 @@
 namespace dcg {
 
 // ------------------------------------------------------------------ WiFi
-void wifiBegin(const char* ssid, const char* password) {
+namespace {
+// Time given to one network (association + DHCP) before moving on to the next one. While
+// connected, a short drop is retried on the same network by the SDK's auto-reconnect.
+constexpr uint32_t kWifiAttemptMs = 15000;
+
+const WifiNetwork* gNetworks = nullptr;
+size_t gCount = 0;
+size_t gIndex = 0;
+uint32_t gAttemptStart = 0;
+bool gWasUp = false;
+
+void tryNetwork(size_t i) {
+  gIndex = i;
+  gAttemptStart = millis();
+  const WifiNetwork& n = gNetworks[i];
+  const bool open = n.password == nullptr || n.password[0] == '\0';
+  Serial.printf("[wifi] conectando a \"%s\"%s (%u/%u)\n", n.ssid, open ? " (abierta)" : "",
+                unsigned(i + 1), unsigned(gCount));
+  WiFi.disconnect(false, false);
+  WiFi.begin(n.ssid, open ? nullptr : n.password);
+}
+}  // namespace
+
+void wifiBegin(const WifiNetwork* networks, size_t count) {
+  gNetworks = networks;
+  gCount = count > kMaxWifiNetworks ? kMaxWifiNetworks : count;
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);  // lower latency for polling
-  WiFi.begin(ssid, password);
+  if (gCount > 0) tryNetwork(0);
+}
+
+void wifiTick() {
+  if (gCount == 0) return;
+  const bool up = wifiUp();
+  if (up) {
+    if (!gWasUp) {
+      Serial.printf("[wifi] conectado a \"%s\" IP=%s RSSI=%d\n", gNetworks[gIndex].ssid,
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    }
+    gWasUp = true;
+    return;
+  }
+  if (gWasUp) {  // just dropped: give auto-reconnect a full window on the same network
+    gWasUp = false;
+    gAttemptStart = millis();
+    Serial.printf("[wifi] desconectado de \"%s\"\n", gNetworks[gIndex].ssid);
+    return;
+  }
+  if (millis() - gAttemptStart >= kWifiAttemptMs) tryNetwork((gIndex + 1) % gCount);
 }
 
 bool wifiUp() { return WiFi.status() == WL_CONNECTED; }
+
+const char* wifiSsid() { return gCount ? gNetworks[gIndex].ssid : ""; }
 
 // ------------------------------------------------------------------ clock
 void NtpClock::begin(const char* server1, const char* server2) {

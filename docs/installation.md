@@ -157,6 +157,7 @@ cd firmware/esp32-door && ../../backend/.venv/bin/pytest test/integration   # fi
    | Macro | Valor |
    |---|---|
    | `DCG_WIFI_SSID` / `DCG_WIFI_PASSWORD` | Tu red WiFi de 2.4 GHz |
+   | `DCG_WIFI_SSID_2` / `DCG_WIFI_PASSWORD_2` | Opcional: segunda red de respaldo (se cambia tras 15 s sin conexión). Contraseña `""` = red abierta |
    | `DCG_BACKEND_URL` | `http://<IP-del-PC>:8000`, sin `/` final. Con Docker, el puerto publicado |
    | `DCG_DEVICE_ID` / `DCG_DEVICE_SECRET` | `DC-DOOR-01` y los 64 caracteres hex de la semilla |
    | `DCG_CLOCK_SKEW_S` | Igual que `DCG_DEVICE_CLOCK_SKEW_S` del backend (30) |

@@ -5,6 +5,10 @@
 // ---------------------------------------------------------------- WiFi
 #define DCG_WIFI_SSID "MiRedWiFi"
 #define DCG_WIFI_PASSWORD "cambia-esto"
+// Optional second network, tried if the first one is not available (failover every 15 s).
+// Leave DCG_WIFI_PASSWORD_2 as "" for an open network (no password).
+// #define DCG_WIFI_SSID_2 "OtraRed"
+// #define DCG_WIFI_PASSWORD_2 ""
 
 // ---------------------------------------------------------------- backend
 // Base URL without trailing slash. The PC running FastAPI must listen on 0.0.0.0:

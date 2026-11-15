@@ -28,6 +28,13 @@
 #define DCG_BACKEND_CA_PEM nullptr
 #endif
 // Older dcg_config.h files without the LCD section keep compiling (LCD on, autodetect).
+// Optional second WiFi network (failover). "" password = open network.
+#ifndef DCG_WIFI_SSID_2
+#define DCG_WIFI_SSID_2 ""
+#endif
+#ifndef DCG_WIFI_PASSWORD_2
+#define DCG_WIFI_PASSWORD_2 ""
+#endif
 #ifndef DCG_LCD_ENABLED
 #define DCG_LCD_ENABLED 1
 #endif
@@ -62,11 +69,11 @@ static void printStatus() {
   SensorSnapshot s = hal->sensor();
   Serial.printf(
       "fw=%s state=%s online=%d door=%s angle=%d present=%d dist=%.1f raw=%.1f thr=%.0f "
-      "fault=%d rfid=%d wifi=%d rssi=%d ntp=%d session=%s heap=%u lcd=%s\n",
+      "fault=%d rfid=%d wifi=%d ssid=%s rssi=%d ntp=%d session=%s heap=%u lcd=%s\n",
       kFirmwareVersion, systemStateName(controller->state()), controller->online(),
       doorStateName(hal->doorState()), hal->doorAngle(), s.present, s.distanceCm,
       hal->rawDistance(), controller->config().presenceThresholdCm, s.fault, hal->rfidOk(),
-      wifiUp(), hal->rssi(), ntpClock.synced(),
+      wifiUp(), wifiSsid(), hal->rssi(), ntpClock.synced(),
       controller->sessionId().empty() ? "-" : controller->sessionId().c_str(), hal->freeHeap(),
       (lcd && lcd->present()) ? lcd->screenName() : "none");
 }
@@ -142,7 +149,9 @@ void setup() {
     return;
   }
 
-  wifiBegin(DCG_WIFI_SSID, DCG_WIFI_PASSWORD);
+  static const WifiNetwork networks[] = {{DCG_WIFI_SSID, DCG_WIFI_PASSWORD},
+                                         {DCG_WIFI_SSID_2, DCG_WIFI_PASSWORD_2}};
+  wifiBegin(networks, DCG_WIFI_SSID_2[0] ? 2 : 1);
   ntpClock.begin(DCG_NTP_SERVER_1, DCG_NTP_SERVER_2);
 
   BackendSettings bs;
@@ -172,6 +181,7 @@ void loop() {
   }
   if (hal->takeButtonPress()) controller->localEmergencyClose();
   handleSerial();
+  wifiTick();
   controller->tick();
   delay(10);
 }

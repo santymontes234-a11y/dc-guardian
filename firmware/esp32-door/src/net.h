@@ -35,7 +35,18 @@ class Esp32HttpTransport : public HttpTransport {
   bool tls_ = false;
 };
 
-void wifiBegin(const char* ssid, const char* password);
+// One WiFi network the device may join. An empty or null password means an open network.
+struct WifiNetwork {
+  const char* ssid;
+  const char* password;
+};
+
+// Non-blocking failover across up to kMaxWifiNetworks networks, tried in order. The list must
+// outlive the program (static storage). wifiTick() must be called from loop().
+constexpr size_t kMaxWifiNetworks = 4;
+void wifiBegin(const WifiNetwork* networks, size_t count);
+void wifiTick();
 bool wifiUp();
+const char* wifiSsid();  // network currently joined or being tried ("" if none)
 
 }  // namespace dcg
