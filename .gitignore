@@ -1,0 +1,36 @@
+# Entornos
+.tools/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Datos locales (BD, fotos, biometría, modelos)
+data/
+*.sqlite
+*.db
+*.db-wal
+*.db-shm
+
+# Secretos
+.env
+firmware/**/include/config.h
+firmware/**/include/dcg_config.h
+
+# PlatformIO
+firmware/**/.pio/
+
+# Docker / herramientas locales
+docker-compose.override.yml
+.claude/settings.local.json
+.claude/launch.json
+
+# Editores y sistema
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Artefactos
+*.log
+*.tgz
