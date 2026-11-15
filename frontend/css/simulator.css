@@ -1,0 +1,17 @@
+.sim-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: var(--gap) 0; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+input[type="range"] { width: 100%; padding: 0; }
+.center { justify-content: center; }
+
+.door-card { display: grid; gap: 8px; align-content: start; }
+.door-svg { width: 100%; max-height: 200px; }
+.door-svg .frame { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }
+.door-svg .leaf rect, .door-svg .leaf.static { fill: var(--primary); opacity: .85; }
+.door-svg .knob { fill: var(--surface); }
+#door-leaf { transform-origin: 30px 80px; transition: transform .9s ease-in-out; }
+#door-leaf.open { transform: perspective(300px) rotateY(-80deg); }
+
+.log { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 6px; font-size: 14px; max-height: 360px; overflow-y: auto; }
+.log li.ok { color: var(--ok); }
+.log li.danger { color: var(--danger); }
+.log li .muted { font-family: var(--mono); font-size: 12px; }

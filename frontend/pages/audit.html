@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auditoría · DC Guardian</title>
+</head>
+<body data-page="audit">
+  <main id="content">
+    <div class="row"><h1 style="margin:0">Auditoría</h1><span class="spacer"></span>
+      <button class="btn" id="verify">Verificar cadena de hashes</button><span id="chain"></span></div>
+    <section class="card" style="margin-top:16px">
+      <div class="row" style="margin-bottom:12px">
+        <input id="action" placeholder="Acción o prefijo (p. ej. access.)" style="min-width:220px">
+        <input id="cid" placeholder="correlation_id" class="mono">
+        <span class="spacer"></span><span class="muted" id="total"></span>
+      </div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>#</th><th>Fecha</th><th>Actor</th><th>Acción</th><th>Entidad</th><th>Detalles</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </section>
+  </main>
+  <script type="module">
+    import { ready } from "/js/layout.js";
+    import { api, escapeHtml, fmtDate, guarded } from "/js/api.js";
+    import { $, badge, emptyRow } from "/js/ui.js";
+
+    await ready;
+    async function load() {
+      const page = await guarded(() => api.get("/audit", { action: $("action").value.trim(), correlation_id: $("cid").value.trim(), limit: 200 }));
+      if (!page) return;
+      $("total").textContent = `${page.items.length} de ${page.total}`;
+      $("rows").innerHTML = page.items.map((e) => `<tr>
+        <td class="mono">${e.id}</td><td>${fmtDate(e.ts)}</td>
+        <td>${escapeHtml(e.actor_type)}${e.actor_id ? ` #${escapeHtml(e.actor_id)}` : ""}</td>
+        <td class="mono">${escapeHtml(e.action)}</td>
+        <td>${escapeHtml(e.entity ?? "")} ${e.entity_id ? `<span class="mono muted">${escapeHtml(e.entity_id.slice(0, 12))}</span>` : ""}</td>
+        <td class="mono" style="max-width:420px;word-break:break-word">${escapeHtml(JSON.stringify(e.details))}</td></tr>`).join("")
+        || emptyRow(6, "Sin registros");
+    }
+    $("verify").addEventListener("click", async () => {
+      const r = await guarded(() => api.get("/audit/verify"));
+      if (r) $("chain").innerHTML = r.ok ? badge(`Íntegra · ${r.checked} registros`, "ok") : badge(`Rota en #${r.broken_at_id}`, "danger");
+    });
+    let t;
+    for (const id of ["action", "cid"]) $(id).addEventListener("input", () => { clearTimeout(t); t = setTimeout(load, 300); });
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registrar ingeniero · DC Guardian</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/engineers.css">
+</head>
+<body data-page="engineers">
+<main id="content" class="en">
+  <a class="en-back" href="/pages/engineers.html">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Ingenieros
+  </a>
+  <header class="en-head">
+    <div>
+      <p class="en-eyebrow">Registro 1 · Alta</p>
+      <h1>Registrar ingeniero</h1>
+      <p class="muted en-lede">Completa los datos personales y captura el rostro. El sistema asigna el ID automáticamente.</p>
+    </div>
+  </header>
+
+  <div class="en-rule" role="note">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div>Registrar a un ingeniero <strong>no le concede acceso</strong>. Para entrar necesita una
+      <a href="/pages/requests.html">solicitud de autorización</a> aprobada y vigente (Registro 2).</div>
+  </div>
+
+  <p class="card admin-auditor-note" id="auditor-note" hidden>Tu rol (auditor) es de solo lectura: no puedes registrar ingenieros.</p>
+
+  <form id="form" class="admin-only" novalidate>
+    <div class="en-layout">
+      <section class="card en-section">
+        <h2><span class="en-step">1</span> Datos del ingeniero</h2>
+        <p class="muted">Datos personales (se almacenan separados de la biometría).</p>
+        <div class="en-form">
+          <div class="en-idbox">
+            <div><small>ID de ingeniero (automático)</small><br><strong id="next-id">ENG-····</strong></div>
+            <small>Se confirma al guardar</small>
+          </div>
+          <label><span>Nombre completo</span>
+            <input name="full_name" required minlength="3" maxlength="120" autocomplete="off" placeholder="p. ej. Laura Méndez Ríos">
+            <small class="en-field-error" data-for="full_name"></small>
+          </label>
+          <div class="two">
+            <label><span>Departamento</span>
+              <input name="department" required minlength="2" maxlength="80" list="dl-dept" autocomplete="off" placeholder="Infraestructura">
+              <small class="en-field-error" data-for="department"></small>
+            </label>
+            <label><span>Cargo</span>
+              <input name="position" required minlength="2" maxlength="80" list="dl-pos" autocomplete="off" placeholder="Ingeniera de redes">
+              <small class="en-field-error" data-for="position"></small>
+            </label>
+          </div>
+          <label><span>Correo institucional</span>
+            <input name="institutional_email" type="email" required maxlength="120" autocomplete="off" placeholder="nombre.apellido@dcguardian.edu">
+            <small class="en-field-error" data-for="institutional_email"></small>
+          </label>
+          <fieldset style="border:0;padding:0;margin:0;display:grid;gap:6px">
+            <legend class="muted" style="font-size:13px;font-weight:600;color:var(--text);padding:0;margin-bottom:6px">Estado inicial</legend>
+            <div class="en-status-opts">
+              <label><input type="radio" name="status" value="ACTIVO" checked> Activo</label>
+              <label><input type="radio" name="status" value="INACTIVO"> Inactivo</label>
+              <label><input type="radio" name="status" value="SUSPENDIDO"> Suspendido</label>
+            </div>
+          </fieldset>
+          <datalist id="dl-dept"><option>Infraestructura</option><option>Operaciones</option><option>Energía</option><option>Redes</option><option>Seguridad</option><option>Climatización</option></datalist>
+          <datalist id="dl-pos"><option>Ingeniero de redes</option><option>Ingeniero de sistemas</option><option>Ingeniero eléctrico</option><option>Técnico de soporte</option><option>Jefe de turno</option></datalist>
+        </div>
+      </section>
+
+      <section class="card en-section">
+        <h2><span class="en-step">2</span> Registro facial</h2>
+        <p class="muted">Captura entre 3 y 5 muestras con la webcam o sube fotografías. Cada muestra se valida (un rostro, nitidez, iluminación, pose).</p>
+        <div id="capture"></div>
+        <label class="fc-switch" style="margin-top:12px">
+          <input type="checkbox" id="skip-face"> Registrar el rostro más tarde
+        </label>
+      </section>
+    </div>
+
+    <div class="card en-submit">
+      <ul class="en-progress" id="progress" hidden></ul>
+      <span class="spacer"></span>
+      <a class="btn" href="/pages/engineers.html">Cancelar</a>
+      <button type="submit" class="btn btn-primary en-btn" id="submit">Registrar ingeniero</button>
+    </div>
+  </form>
+</main>
+<script type="module" src="/js/pages/engineer-new.js"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingenieros · DC Guardian</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/engineers.css">
+</head>
+<body data-page="engineers">
+<main id="content" class="en">
+  <header class="en-head">
+    <div>
+      <p class="en-eyebrow">Registro 1 · Identidad y biometría</p>
+      <h1>Ingenieros registrados</h1>
+      <p class="muted en-lede">Datos personales y plantilla facial de cada ingeniero. Estar registrado no concede acceso al Data Center.</p>
+    </div>
+    <a class="btn btn-primary admin-only en-btn" href="/pages/engineer-new.html">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      Registrar ingeniero
+    </a>
+  </header>
+
+  <section class="en-stats" aria-label="Resumen">
+    <article class="card en-stat" data-tone="info"><span>Total registrados</span><strong id="st-total">–</strong><small>Sin contar eliminados</small></article>
+    <article class="card en-stat" data-tone="ok"><span>Activos</span><strong id="st-active">–</strong><small>Pueden solicitar acceso</small></article>
+    <article class="card en-stat" data-tone="danger"><span>Suspendidos</span><strong id="st-suspended">–</strong><small>Accesos revocados</small></article>
+    <article class="card en-stat" data-tone="warn"><span>Sin rostro</span><strong id="st-noface">–</strong><small>Registro biométrico pendiente</small></article>
+  </section>
+
+  <section class="card en-panel">
+    <div class="en-toolbar">
+      <div class="en-filters">
+        <label class="en-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="f-q" type="search" placeholder="Nombre, ID, correo, departamento…" aria-label="Buscar ingeniero">
+        </label>
+        <select id="f-status" aria-label="Filtrar por estado">
+          <option value="">Todos los estados</option>
+          <option value="ACTIVO">Activo</option>
+          <option value="INACTIVO">Inactivo</option>
+          <option value="SUSPENDIDO">Suspendido</option>
+          <option value="ELIMINADO">Eliminado (historial)</option>
+        </select>
+        <select id="f-face" aria-label="Filtrar por registro facial">
+          <option value="">Con y sin rostro</option>
+          <option value="true">Con rostro registrado</option>
+          <option value="false">Sin rostro</option>
+        </select>
+      </div>
+      <span class="muted" id="result-count" aria-live="polite"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table en-table">
+        <thead>
+          <tr>
+            <th scope="col">Ingeniero</th>
+            <th scope="col">ID</th>
+            <th scope="col">Departamento · Cargo</th>
+            <th scope="col">Estado</th>
+            <th scope="col">Biometría</th>
+            <th scope="col">Tarjetas</th>
+            <th scope="col">Registro</th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="7" class="empty">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="en-pager">
+      <button type="button" class="btn" id="prev">Anterior</button>
+      <span class="muted" id="page-info"></span>
+      <button type="button" class="btn" id="next">Siguiente</button>
+    </div>
+  </section>
+</main>
+<script type="module" src="/js/pages/engineers.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DC Guardian · Acceso</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <style>
+    .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+    .login .card { width: min(380px, 100%); }
+    .login h1 { margin: 0 0 4px; font-size: 22px; }
+    .login p { margin: 0 0 16px; }
+    .login .error { color: var(--danger); min-height: 1.5em; margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="login">
+    <form class="card stack" id="login">
+      <div>
+        <h1>DC Guardian</h1>
+        <p class="muted">Control de acceso al Data Center</p>
+      </div>
+      <label>Usuario <input name="username" autocomplete="username" required autofocus></label>
+      <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+      <p class="error" id="error" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Entrar</button>
+      <a class="muted" href="/pages/kiosk.html">Abrir kiosco de verificación facial</a>
+    </form>
+  </main>
+  <script type="module">
+    import { api, ApiError } from "/js/api.js";
+
+    const params = new URLSearchParams(location.search);
+    const next = params.get("next");
+    // Solo rutas del mismo origen: el parser de URL normaliza trucos como "/\\evil" o "/%09/evil".
+    let target = "/pages/dashboard.html";
+    try {
+      const u = new URL(next ?? "", location.origin);
+      if (next && u.origin === location.origin) target = u.pathname + u.search + u.hash;
+    } catch { /* next inválido: ir al panel */ }
+
+    // ¿Ya hay sesión? Entrar directamente.
+    api.get("/auth/me", null, { noRedirect: true }).then(() => location.replace(target)).catch(() => {});
+
+    document.getElementById("login").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = new FormData(e.target);
+      const err = document.getElementById("error");
+      const btn = e.target.querySelector("button");
+      err.textContent = "";
+      btn.disabled = true;
+      try {
+        await api.post("/auth/login", { username: form.get("username"), password: form.get("password") },
+          { noRedirect: true });
+        location.replace(target);
+      } catch (ex) {
+        err.textContent = ex instanceof ApiError ? ex.message : "Error inesperado";
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

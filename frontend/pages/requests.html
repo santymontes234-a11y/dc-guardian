@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autorizaciones · DC Guardian</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/requests.css">
+</head>
+<body data-page="requests">
+<main id="content" class="rq">
+  <header class="rq-head">
+    <div>
+      <p class="rq-eyebrow">Registro 2 · Autorizaciones temporales</p>
+      <h1>Solicitudes de acceso</h1>
+      <p class="muted rq-lede">El registro de un ingeniero no concede acceso: solo una solicitud aprobada, dentro de su ventana horaria, permite entrar.</p>
+    </div>
+    <button class="btn btn-primary admin-only rq-icon-btn" id="new-btn" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      Nueva solicitud
+    </button>
+  </header>
+
+  <section class="rq-stats" aria-label="Resumen">
+    <article class="card rq-stat"><span>Pendientes</span><strong id="st-pending">–</strong><small>Esperan decisión</small></article>
+    <article class="card rq-stat rq-stat-accent"><span>Vigentes ahora</span><strong id="st-inforce">–</strong><small>Aprobadas dentro de su ventana</small></article>
+    <article class="card rq-stat"><span>Aprobadas</span><strong id="st-approved">–</strong><small>Programadas o en curso</small></article>
+    <article class="card rq-stat"><span>Rechazadas</span><strong id="st-rejected">–</strong><small>Total histórico</small></article>
+  </section>
+
+  <section class="card rq-panel">
+    <div class="rq-toolbar">
+      <div class="rq-tabs" role="tablist" aria-label="Vistas">
+        <button type="button" role="tab" data-tab="PENDIENTE" aria-selected="true">Pendientes <span class="rq-count" id="tc-PENDIENTE"></span></button>
+        <button type="button" role="tab" data-tab="APROBADA" aria-selected="false">Aprobadas <span class="rq-count" id="tc-APROBADA"></span></button>
+        <button type="button" role="tab" data-tab="RECHAZADA" aria-selected="false">Rechazadas <span class="rq-count" id="tc-RECHAZADA"></span></button>
+        <button type="button" role="tab" data-tab="ALL" aria-selected="false">Historial <span class="rq-count" id="tc-ALL"></span></button>
+      </div>
+      <div class="rq-filters">
+        <select id="f-status" aria-label="Filtrar por estado" hidden>
+          <option value="">Todos los estados</option>
+          <option value="PENDIENTE">Pendiente</option>
+          <option value="APROBADA">Aprobada</option>
+          <option value="RECHAZADA">Rechazada</option>
+          <option value="EXPIRADA">Expirada</option>
+          <option value="REVOCADA">Revocada</option>
+          <option value="FINALIZADA">Finalizada</option>
+        </select>
+        <label class="rq-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="f-q" type="search" placeholder="Buscar ingeniero, UID o área" aria-label="Buscar">
+        </label>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="table rq-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Ingeniero</th><th>Tarjeta</th><th>Área</th>
+            <th>Ventana</th><th>Duración</th><th>Estado</th><th class="rq-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>No hay solicitudes en esta vista.</div>
+    </div>
+    <footer class="rq-pager">
+      <span class="muted" id="pager-info"></span>
+      <div class="row">
+        <button type="button" class="btn" id="prev">Anterior</button>
+        <button type="button" class="btn" id="next">Siguiente</button>
+      </div>
+    </footer>
+  </section>
+</main>
+
+<!-- Detalle de solicitud -->
+<div class="rq-drawer-bg" id="drawer-bg" hidden></div>
+<aside class="rq-drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title" aria-hidden="true">
+  <header class="rq-drawer-head">
+    <div>
+      <p class="rq-eyebrow" id="d-eyebrow">Solicitud</p>
+      <h2 id="d-title">Detalle</h2>
+    </div>
+    <button type="button" class="btn btn-ghost rq-x" id="d-close" aria-label="Cerrar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </header>
+  <div class="rq-drawer-body" id="d-body"></div>
+  <footer class="rq-drawer-foot admin-only" id="d-actions"></footer>
+</aside>
+
+<!-- Nueva solicitud -->
+<dialog class="rq-modal" id="new-modal" aria-labelledby="n-title">
+  <form id="new-form" novalidate>
+    <header class="rq-modal-head">
+      <div>
+        <p class="rq-eyebrow">Registro 2</p>
+        <h2 id="n-title">Nueva solicitud de acceso</h2>
+      </div>
+      <button type="button" class="btn btn-ghost rq-x" data-close aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="rq-modal-body">
+      <fieldset>
+        <legend>Identificación</legend>
+        <div class="rq-grid-2">
+          <label>
+            <span>ID del ingeniero</span>
+            <input name="engineer_id" id="n-eng" placeholder="ENG-0001" autocomplete="off" required>
+            <small class="rq-hint" id="n-eng-hint">Debe estar registrado y activo.</small>
+          </label>
+          <label>
+            <span>UID RFID</span>
+            <select id="n-uid" required disabled><option value="">Primero indica el ingeniero</option></select>
+            <small class="rq-hint" id="n-uid-hint">Tarjeta activa vinculada al ingeniero.</small>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Acceso</legend>
+        <label>
+          <span>Área del Data Center</span>
+          <select id="n-area" required><option value="">Selecciona un área…</option></select>
+        </label>
+        <label>
+          <span>Motivo del acceso</span>
+          <textarea id="n-reason" rows="2" maxlength="1000" required placeholder="Ej.: sustitución de fuente de alimentación en el rack B-07"></textarea>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Ventana de acceso</legend>
+        <div class="rq-grid-4">
+          <label><span>Fecha solicitada</span><input type="date" id="n-date" required></label>
+          <label><span>Hora de inicio</span><input type="time" id="n-start" required></label>
+          <label><span>Hora de finalización</span><input type="time" id="n-end" required></label>
+          <label><span>Duración (min)</span><input type="number" id="n-duration" min="1" max="1440" step="1" required></label>
+        </div>
+        <small class="rq-hint" id="n-window-hint">Máximo 24 h. Si la hora de fin es anterior a la de inicio, termina al día siguiente.</small>
+      </fieldset>
+      <fieldset>
+        <legend>Información adicional</legend>
+        <label>
+          <span>Observaciones <em>(opcional)</em></span>
+          <textarea id="n-obs" rows="2" maxlength="1000" placeholder="Acompañantes, herramientas, ticket relacionado…"></textarea>
+        </label>
+      </fieldset>
+      <div class="rq-error" id="n-error" role="alert" hidden></div>
+    </div>
+    <footer class="rq-modal-foot">
+      <p class="muted rq-small">Se crea como <b>PENDIENTE</b> y no concede acceso hasta que otro administrador la apruebe.</p>
+      <div class="row">
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="n-submit">Crear solicitud</button>
+      </div>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Decisión: aprobar / rechazar / revocar -->
+<dialog class="rq-modal rq-modal-sm" id="decide-modal" aria-labelledby="x-title">
+  <form id="decide-form" novalidate>
+    <header class="rq-modal-head"><h2 id="x-title">Confirmar</h2></header>
+    <div class="rq-modal-body">
+      <p id="x-text"></p>
+      <label>
+        <span id="x-label">Notas</span>
+        <textarea id="x-notes" rows="3" maxlength="500"></textarea>
+      </label>
+      <div class="rq-error" id="x-error" role="alert" hidden></div>
+    </div>
+    <footer class="rq-modal-foot">
+      <span></span>
+      <div class="row">
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="x-submit">Confirmar</button>
+      </div>
+    </footer>
+  </form>
+</dialog>
+
+<script type="module" src="/js/pages/requests.js"></script>
+</body>
+</html>

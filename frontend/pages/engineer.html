@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ficha de ingeniero · DC Guardian</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/engineers.css">
+</head>
+<body data-page="engineers">
+<main id="content" class="en">
+  <a class="en-back" href="/pages/engineers.html">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> Ingenieros
+  </a>
+
+  <header class="en-head">
+    <div class="en-profile">
+      <span class="en-avatar lg" id="avatar">··</span>
+      <div>
+        <p class="en-eyebrow" id="eng-code">ENG-····</p>
+        <h1 id="eng-name">Cargando…</h1>
+        <div class="meta" id="eng-meta"></div>
+      </div>
+    </div>
+    <div class="en-actions admin-only" id="actions"></div>
+  </header>
+
+  <div class="en-rule" role="note">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div>Este registro <strong>no concede acceso</strong>. El acceso depende exclusivamente de las
+      <a id="requests-link" href="/pages/requests.html">solicitudes de autorización</a> aprobadas y vigentes.</div>
+  </div>
+
+  <div class="grid grid-2">
+    <section class="card">
+      <div class="en-card-head">
+        <h2>Datos personales</h2>
+        <button type="button" class="btn admin-only" id="edit-btn">Editar</button>
+      </div>
+      <dl class="en-dl" id="data"></dl>
+      <form id="edit-form" class="en-form" hidden novalidate>
+        <label><span>Nombre completo</span><input name="full_name" required minlength="3" maxlength="120"></label>
+        <div class="two">
+          <label><span>Departamento</span><input name="department" required minlength="2" maxlength="80"></label>
+          <label><span>Cargo</span><input name="position" required minlength="2" maxlength="80"></label>
+        </div>
+        <label><span>Correo institucional</span><input name="institutional_email" type="email" required maxlength="120"></label>
+        <p class="en-field-error" id="edit-error"></p>
+        <div class="row" style="justify-content:flex-end">
+          <button type="button" class="btn" id="edit-cancel">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar cambios</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="en-card-head">
+        <h2>Registro biométrico</h2>
+        <div class="row admin-only">
+          <button type="button" class="btn" id="face-btn">Registrar rostro</button>
+        </div>
+      </div>
+      <div id="face"></div>
+    </section>
+
+    <section class="card">
+      <div class="en-card-head">
+        <h2>Tarjetas RFID vinculadas</h2>
+        <a class="btn btn-ghost" href="/pages/cards.html">Gestionar tarjetas</a>
+      </div>
+      <div id="cards"></div>
+    </section>
+
+    <section class="card en-danger admin-only" id="danger">
+      <div class="en-card-head"><h2>Eliminación de datos</h2></div>
+      <p class="muted" style="margin-top:0;font-size:14px">Borra de forma <strong>irreversible</strong> los datos personales y biométricos.
+        Se conserva solo el ID para mantener íntegro el historial de auditoría. Se revocan sus solicitudes y se desvinculan sus tarjetas.</p>
+      <div class="row">
+        <button type="button" class="btn btn-danger" id="del-face-btn">Eliminar solo biometría</button>
+        <button type="button" class="btn btn-danger" id="erase-btn">Eliminar datos personales y biométricos</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Cambio de estado -->
+  <dialog class="en-modal" id="status-dlg" aria-labelledby="status-title">
+    <form method="dialog" id="status-form">
+      <h2 id="status-title">Cambiar estado</h2>
+      <p class="muted" id="status-desc" style="margin:0"></p>
+      <label><span>Motivo</span><textarea name="reason" required minlength="3" maxlength="300" rows="3"></textarea>
+        <small class="muted">Queda en la auditoría inmutable: no incluyas nombres ni datos personales.</small></label>
+      <footer>
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="status-ok">Confirmar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Borrado -->
+  <dialog class="en-modal" id="erase-dlg" aria-labelledby="erase-title">
+    <form method="dialog" id="erase-form">
+      <h2 id="erase-title">Eliminar datos personales y biométricos</h2>
+      <div class="warn-box">Acción irreversible. Se borrarán nombre, departamento, cargo, correo y todas las muestras faciales.</div>
+      <label><span>Escribe el ID <b class="mono" id="erase-code"></b> para confirmar</span><input name="confirm" required autocomplete="off"></label>
+      <label><span>Motivo</span><textarea name="reason" required minlength="3" maxlength="300" rows="2"></textarea>
+        <small class="muted">Se conserva en la auditoría aunque se borren los datos: no incluyas nombres ni datos personales.</small></label>
+      <footer>
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-danger" id="erase-ok" disabled>Eliminar definitivamente</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Re-registro facial -->
+  <dialog class="en-modal wide" id="face-dlg" aria-labelledby="face-title">
+    <h2 id="face-title">Registro facial</h2>
+    <p class="muted" style="margin:0 0 12px;font-size:14px" id="face-desc"></p>
+    <div id="face-capture"></div>
+    <label class="fc-switch" style="margin-top:12px" id="append-wrap"><input type="checkbox" id="face-append"> Añadir a las muestras existentes (en vez de reemplazarlas)</label>
+    <ul class="en-progress" id="face-progress"></ul>
+    <footer class="row" style="justify-content:flex-end;margin-top:12px">
+      <button type="button" class="btn" id="face-cancel">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="face-save" disabled>Guardar muestras</button>
+    </footer>
+  </dialog>
+</main>
+<script type="module" src="/js/pages/engineer.js"></script>
+</body>
+</html>

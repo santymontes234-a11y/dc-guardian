@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel · DC Guardian</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body data-page="dashboard">
+  <main id="content">
+    <div class="row">
+      <h1 style="margin:0">Panel de control</h1>
+      <span class="spacer"></span>
+      <span id="live" class="badge badge-muted">Conectando…</span>
+    </div>
+
+    <section class="grid grid-kpi kpis" id="kpis"></section>
+
+    <section class="grid grid-2">
+      <div class="card">
+        <h2>Estado del hardware</h2>
+        <div id="devices"></div>
+      </div>
+      <div class="card">
+        <h2>Ingenieros dentro</h2>
+        <div id="inside"></div>
+        <h2 style="margin-top:16px">Denegaciones por motivo (24 h)</h2>
+        <div id="reasons"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row"><h2 style="margin:0">Eventos en tiempo real</h2><span class="spacer"></span>
+        <span class="muted" id="evt-count"></span></div>
+      <ul class="feed" id="feed"><li class="muted">Esperando eventos…</li></ul>
+    </section>
+
+    <section class="grid grid-2">
+      <div class="card">
+        <h2>Últimos accesos</h2>
+        <div class="table-wrap"><table class="table"><thead id="sess-head"></thead><tbody id="sessions"></tbody></table></div>
+      </div>
+      <div class="card">
+        <h2>Últimas denegaciones</h2>
+        <div class="table-wrap"><table class="table"><thead id="deny-head"></thead><tbody id="denials"></tbody></table></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row"><h2 style="margin:0">Alertas abiertas</h2><span class="spacer"></span>
+        <a href="/pages/alerts.html">Ver todas</a></div>
+      <div class="table-wrap"><table class="table"><thead id="alert-head"></thead><tbody id="alerts"></tbody></table></div>
+    </section>
+  </main>
+  <script type="module" src="/js/pages/dashboard.js"></script>
+</body>
+</html>

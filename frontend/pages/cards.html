@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tarjetas · DC Guardian</title>
+</head>
+<body data-page="cards">
+  <main id="content">
+    <h1>Tarjetas RFID</h1>
+    <section class="card admin-only" style="margin-bottom:16px">
+      <h2>Registrar tarjeta</h2>
+      <form class="row" id="create" style="align-items:end">
+        <label>UID (RC522) <input name="uid" class="mono" placeholder="04A1B2C3" required maxlength="24"></label>
+        <label>Etiqueta <input name="label" maxlength="60" placeholder="Tarjeta de Laura"></label>
+        <label>Vincular a <select name="engineer_id" id="engineer-select"><option value="">— sin asignar —</option></select></label>
+        <button class="btn btn-primary">Registrar</button>
+      </form>
+    </section>
+    <section class="card">
+      <div class="row" style="margin-bottom:12px">
+        <input id="q" placeholder="Buscar UID o etiqueta" style="flex:1;min-width:200px">
+        <select id="status"><option value="">Todos los estados</option><option>ACTIVA</option><option>BLOQUEADA</option>
+          <option>PERDIDA</option><option>BAJA</option></select>
+      </div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>UID</th><th>Etiqueta</th><th>Ingeniero</th><th>Estado</th><th>Fallos</th><th>Bloqueo</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </section>
+    <dialog id="dlg"><form method="dialog" class="stack" id="dlg-form"></form></dialog>
+  </main>
+  <script type="module" src="/js/pages/cards.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiosco facial · DC Guardian</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/kiosk.css">
+</head>
+<body class="kiosk">
+  <main class="kiosk-main">
+    <header class="row">
+      <b>DC Guardian · Kiosco</b><span class="muted" id="device-name"></span>
+      <span class="spacer"></span><span id="live" class="badge badge-muted">Conectando…</span>
+    </header>
+
+    <section class="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="overlay" id="overlay">
+        <div class="msg" id="msg">Acérquese a la puerta y pase su tarjeta</div>
+        <div class="sub" id="sub"></div>
+      </div>
+    </section>
+
+    <footer class="row">
+      <select id="camera" aria-label="Cámara"></select>
+      <button class="btn" id="start-cam">Activar cámara</button>
+      <span class="spacer"></span>
+      <span class="muted" id="countdown"></span>
+    </footer>
+
+    <dialog id="token-dialog">
+      <form method="dialog" class="stack" id="token-form">
+        <h2 style="margin:0">Token de kiosco</h2>
+        <p class="muted" style="margin:0">Inicia sesión como administrador o pega el token de kiosco
+          (Panel → <code>/api/v1/system/kiosk-token</code>).</p>
+        <input id="token" class="mono" autocomplete="off" required>
+        <div class="row"><a href="/index.html?next=/pages/kiosk.html">Iniciar sesión</a><span class="spacer"></span>
+          <button class="btn btn-primary">Guardar</button></div>
+      </form>
+    </dialog>
+  </main>
+  <script type="module" src="/js/pages/kiosk.js"></script>
+</body>
+</html>

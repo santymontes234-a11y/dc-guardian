@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Accesos · DC Guardian</title>
+</head>
+<body data-page="access">
+  <main id="content">
+    <h1>Registro de accesos</h1>
+    <section class="card">
+      <div class="row" style="margin-bottom:12px">
+        <select id="state"><option value="">Todos</option><option value="CLOSED">Completados</option>
+          <option value="DENIED">Denegados</option><option value="TIMEOUT">Tiempo agotado</option>
+          <option value="AWAITING_FACE">Esperando rostro</option></select>
+        <select id="direction"><option value="">Entradas y salidas</option><option value="ENTRADA">Entradas</option>
+          <option value="SALIDA">Salidas</option></select>
+        <span class="spacer"></span><span class="muted" id="total"></span>
+        <button class="btn" id="more">Cargar más</button>
+      </div>
+      <div class="table-wrap"><table class="table"><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+    </section>
+  </main>
+  <script type="module">
+    import { ready } from "/js/layout.js";
+    import { api, guarded } from "/js/api.js";
+    import { connectEvents } from "/js/ws.js";
+    import { $, SESSION_HEAD, emptyRow, sessionRow } from "/js/ui.js";
+
+    await ready;
+    $("head").innerHTML = SESSION_HEAD;
+    let limit = 50;
+    async function load() {
+      const page = await guarded(() => api.get("/access-sessions", { state: $("state").value, direction: $("direction").value, limit }));
+      if (!page) return;
+      $("total").textContent = `${page.items.length} de ${page.total}`;
+      $("rows").innerHTML = page.items.map(sessionRow).join("") || emptyRow(7, "Sin registros");
+    }
+    $("state").addEventListener("change", load);
+    $("direction").addEventListener("change", load);
+    $("more").addEventListener("click", () => { limit = Math.min(limit + 50, 200); load(); });
+    let t;
+    connectEvents().on("access.*", () => { clearTimeout(t); t = setTimeout(load, 300); });
+    load();
+  </script>
+</body>
+</html>

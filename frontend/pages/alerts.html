@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alertas · DC Guardian</title>
+</head>
+<body data-page="alerts">
+  <main id="content">
+    <h1>Alertas</h1>
+    <section class="card">
+      <div class="row" style="margin-bottom:12px">
+        <label class="row" style="color:var(--text)"><input type="checkbox" id="open" checked> Solo abiertas</label>
+        <select id="severity"><option value="">Todas las severidades</option><option>CRITICAL</option><option>WARN</option><option>INFO</option></select>
+        <span class="spacer"></span><span class="muted" id="total"></span>
+      </div>
+      <div class="table-wrap"><table class="table"><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+    </section>
+  </main>
+  <script type="module">
+    import { ready } from "/js/layout.js";
+    import { api, guarded, toast } from "/js/api.js";
+    import { connectEvents } from "/js/ws.js";
+    import { $, ALERT_HEAD, alertRow, emptyRow } from "/js/ui.js";
+
+    await ready;
+    $("head").innerHTML = ALERT_HEAD;
+    async function load() {
+      const page = await guarded(() => api.get("/alerts", { unacknowledged: $("open").checked, severity: $("severity").value, limit: 200 }));
+      if (!page) return;
+      $("total").textContent = `${page.total} alertas`;
+      $("rows").innerHTML = page.items.map((a) => alertRow(a, { ack: true })).join("") || emptyRow(5, "Sin alertas");
+    }
+    $("rows").addEventListener("click", async (e) => {
+      if (!e.target.matches("[data-ack]")) return;
+      const id = e.target.closest("tr").dataset.id;
+      if (await guarded(() => api.post(`/alerts/${id}/ack`))) { toast("Alerta atendida", "ok"); load(); }
+    });
+    $("open").addEventListener("change", load);
+    $("severity").addEventListener("change", load);
+    connectEvents().on("alert.*", load);
+    load();
+  </script>
+</body>
+</html>
