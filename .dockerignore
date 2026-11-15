@@ -1,0 +1,19 @@
+# Nada de datos, secretos ni entornos locales dentro de la imagen.
+data/
+**/.env
+**/.venv/
+.tools/
+.git/
+.claude/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+*.db
+*.sqlite
+*.db-wal
+*.db-shm
+firmware/
+screenshots/
+docs/
+*.md
+!backend/**/*.md

@@ -1,0 +1,36 @@
+# DC Guardian — dependencias de ejecución del backend (FastAPI + visión facial).
+# Python 3.12 (InsightFace/onnxruntime no soportan aún 3.13/3.14 en este proyecto).
+#
+#   python3.12 -m venv backend/.venv
+#   backend/.venv/bin/pip install -r requirements.txt
+#
+# Versiones fijadas a las del lock (backend/uv.lock). Para una instalación 100 % reproducible
+# (incluidas las dependencias transitivas) usa backend/requirements.lock.txt, que es lo que
+# instala la imagen Docker. Fuente de verdad: backend/pyproject.toml.
+
+# --- API web
+fastapi==0.163.0
+uvicorn[standard]==0.54.0          # servidor ASGI (+ websockets, uvloop, httptools)
+python-multipart==0.0.33           # subida de fotogramas (multipart/form-data)
+
+# --- Datos
+sqlalchemy==2.1.8                  # ORM sobre SQLite
+alembic==1.20.1                    # migraciones
+
+# --- Validación y configuración
+pydantic==2.14.3
+pydantic-settings==2.16.3          # variables DCG_* / backend/.env
+email-validator==2.3.0             # correo institucional del ingeniero
+
+# --- Seguridad
+pyjwt==2.15.1                      # sesión de administrador (cookie HttpOnly)
+bcrypt==5.0.0                      # hash de contraseñas
+cryptography==50.0.2               # Fernet: secretos HMAC de los ESP32 cifrados en reposo
+
+# --- Visión facial (obligatorio: el backend lo importa al arrancar)
+numpy==2.5.4
+opencv-python-headless==5.0.0.93   # decodificación JPEG y métricas de calidad (sin GUI)
+onnxruntime==1.32.0                # inferencia CPU de los modelos de InsightFace
+insightface==2.1                   # detección + embedding facial (modelo buffalo_l)
+# Nota: insightface declara también "opencv-python" (con GUI/X11). Comparte el módulo cv2
+# con la variante headless; en servidores/contenedores se desinstala (ver Dockerfile).

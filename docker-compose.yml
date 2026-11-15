@@ -1,0 +1,62 @@
+# DC Guardian — despliegue de demostración (un solo servicio).
+#
+#   cp .env.example .env              # opcional: puerto y modo
+#   docker compose build
+#   docker compose up -d
+#   docker compose exec dcguardian python -m scripts.seed
+#   docker compose exec dcguardian python -m scripts.create_admin admin --name "Administrador"
+#   → http://localhost:8000
+#
+# Servicios descartados a propósito (ver docs/architecture.md):
+#   - base de datos: SQLite es un archivo dentro del volumen dcg-data
+#   - reconocimiento facial: ya corre dentro del backend; la webcam la usa el navegador
+#   - MQTT: el ESP32 habla HTTP firmado con HMAC (docs/protocolo-esp32.md)
+
+name: dc-guardian
+
+services:
+  dcguardian:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dc-guardian:latest
+    container_name: dc-guardian
+    restart: unless-stopped
+    ports:
+      # 0.0.0.0 para que el ESP32 de la LAN alcance el backend. Usa 127.0.0.1:8000:8000
+      # si solo vas a usar el modo simulación en este PC.
+      - "${DCG_PORT:-8000}:8000"
+    # Secretos (DCG_JWT_SECRET, DCG_MASTER_KEY) solo desde .env, nunca en este archivo.
+    # Sin ellos, en dev se generan una vez y se guardan en /data/.dev_keys.json.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DCG_ENV: ${DCG_ENV:-dev}
+      DCG_SIMULATION: ${DCG_SIMULATION:-true}
+      DCG_FACE_PROVIDER: ${DCG_FACE_PROVIDER:-auto}
+      DCG_COOKIE_SECURE: ${DCG_COOKIE_SECURE:-false}
+      # El ESP32 virtual llama a este mismo proceso desde dentro del contenedor.
+      DCG_SIM_BASE_URL: http://127.0.0.1:8000
+      DCG_DATA_DIR: /data
+    volumes:
+      - dcg-data:/data          # BD SQLite, claves dev, modelos InsightFace (~300 MB)
+    networks:
+      - dcg-net
+    deploy:
+      replicas: 1               # estado en memoria (WebSocket, limitador, puertas virtuales)
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  dcg-data:
+    name: dc-guardian-data
+
+networks:
+  dcg-net:
+    name: dc-guardian-net
