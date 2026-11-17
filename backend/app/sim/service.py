@@ -54,7 +54,16 @@ class VirtualDoor:
         s = self.sim
         return {"device_code": s.device_id, "online": self.online, "distance_cm": s.distance_cm,
                 "threshold_cm": s.threshold_cm, "present": s.present, "door": s.door, "sensors": dict(s.sensors),
-                "session_id": s.session_id, "door_open_ms": s.door_open_ms, "last": self.last}
+                "session_id": s.session_id, "door_open_ms": s.door_open_ms, "last": self.last,
+                # Main entrance LED + DHT11 (contrato-qr-dht11.md §5). getattr: older simulators lack them.
+                "entrance_led": getattr(s, "entrance_led", None), "fan": getattr(s, "fan", None),
+                "env_alarm": getattr(s, "env_alarm", None), "last_env": getattr(s, "last_env", None)}
+
+    def require(self, method: str) -> Callable[..., Any]:
+        fn = getattr(self.sim, method, None)
+        if not callable(fn):
+            raise DomainError("SIM_NOT_SUPPORTED", f"El ESP32 virtual no implementa «{method}»", 501)
+        return fn
 
 
 _doors: dict[str, VirtualDoor] = {}

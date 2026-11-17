@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Simulador · DC Guardian</title>
+  <title>Simulador · Telecom Conecta · DC Guardian</title>
   <link rel="stylesheet" href="/css/simulator.css">
 </head>
 <body data-page="simulator">
@@ -20,12 +20,12 @@
       <div class="card">
         <h2>1 · Hardware virtual</h2>
         <div class="stack">
-          <label>Distancia HC-SR04: <b id="dist-label">200 cm</b> <span class="muted" id="thr-label"></span>
+          <label>Sensor interior HC-SR04 (alarma de intrusión): <b id="dist-label">200 cm</b> <span class="muted" id="thr-label"></span>
             <input type="range" id="distance" min="0" max="200" step="1" value="200">
           </label>
           <div class="row">
-            <button class="btn" id="approach">Acercarse (30 cm)</button>
-            <button class="btn" id="leave">Alejarse (200 cm)</button>
+            <button class="btn" id="approach">Alguien en la sala (10 cm)</button>
+            <button class="btn" id="leave">Sala vacía (200 cm)</button>
           </div>
           <div class="row">
             <label class="inline"><input type="checkbox" id="online" checked> ESP32 conectado</label>
@@ -65,6 +65,52 @@
           <button class="btn" data-face="stranger" disabled>Persona desconocida</button>
           <a class="btn" id="kiosk-link" href="/pages/kiosk.html" target="_blank" rel="noopener">Usar la webcam (kiosco)</a>
         </div>
+      </div>
+    </section>
+
+    <section class="grid sim-grid">
+      <div class="card">
+        <h2>4 · Entrada principal (QR)</h2>
+        <p class="muted" style="margin-top:0">El lector QR del navegador valida la credencial; el ESP32 recoge la
+          señal firmada con <code>/device/entrance/poll</code> y enciende el LED.</p>
+        <div class="entrance-leds" aria-label="LED de la entrada principal">
+          <div class="led-row"><span class="led green" id="sim-led-green" aria-hidden="true"></span>
+            <span>LED verde (GPIO 14)</span><b id="sim-led-green-state">Apagado</b></div>
+          <div class="led-row"><span class="led red" id="sim-led-red" aria-hidden="true"></span>
+            <span>LED rojo</span><b id="sim-led-red-state">Apagado</b></div>
+        </div>
+        <div class="stack" style="margin-top:12px">
+          <button class="btn btn-primary" id="entrance-poll">Leer señal de entrada</button>
+          <label class="inline"><input type="checkbox" id="entrance-auto"> Sondeo automático cada 1 s (como el firmware)</label>
+          <a class="btn" id="entrance-link" href="/pages/entrance.html" target="_blank" rel="noopener">Abrir lector QR (webcam)</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>5 · Sala de servidores — DHT11</h2>
+        <div class="stack">
+          <label for="temp">Temperatura: <b id="temp-label">24.0 °C</b>
+            <input type="range" id="temp" min="0" max="50" step="0.5" value="24"></label>
+          <label for="hum">Humedad relativa: <b id="hum-label">45 %</b>
+            <input type="range" id="hum" min="0" max="100" step="1" value="45"></label>
+          <label class="inline"><input type="checkbox" id="dht-fail"> Sensor con fallo (lectura ERROR)</label>
+          <div class="row">
+            <button class="btn btn-primary" id="env-send">Enviar lectura</button>
+            <button class="btn" id="env-hot" type="button">Calor (30 °C)</button>
+            <button class="btn" id="env-critical" type="button">Crítica (35 °C)</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Actuadores ambientales</h2>
+        <div class="entrance-leds">
+          <div class="led-row"><span class="fan-icon" id="sim-fan-icon" aria-hidden="true"></span>
+            <span>Ventilador (GPIO 2)</span><b id="sim-fan-state">Apagado</b></div>
+          <div class="led-row"><span class="led red" id="sim-env-alarm" aria-hidden="true"></span>
+            <span>Alarma ambiental (zumbador)</span><b id="sim-env-alarm-state">Inactiva</b></div>
+        </div>
+        <p class="muted" id="sim-last-env" style="margin-bottom:0">Sin lecturas enviadas.</p>
       </div>
     </section>
 

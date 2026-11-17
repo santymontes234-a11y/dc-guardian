@@ -7,7 +7,8 @@ rolled back. Delivery is best-effort: a slow client loses events instead of bloc
 
 Event envelope: ``{"type": "access.granted", "ts": "...", "data": {...}}``.
 Types: ``access.*`` (session changes), ``alert.created``, ``alert.acknowledged``,
-``device.status``, ``request.updated``.
+``device.status``, ``device.presence``, ``request.updated``, ``entrance.scan`` (QR scan at the
+main entrance, access-log row) and ``environment`` (DHT11 reading).
 """
 
 from __future__ import annotations

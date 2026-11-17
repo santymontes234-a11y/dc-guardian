@@ -42,6 +42,8 @@ from app.models import Device, DeviceNonce
 from app.models.enums import AccessState, ActorType, DeviceStatus
 from app.services import access_engine as engine
 from app.services import alerts
+from app.services import entrance as entrance_service
+from app.services import environment as environment_service
 from app.services.context import ActorCtx
 from app.ws.hub import defer
 
@@ -210,6 +212,7 @@ class _Loose(BaseModel):
 class SensorsIn(_Loose):
     rfid: str | None = Field(default=None, max_length=12)
     ultrasonic: str | None = Field(default=None, max_length=12)
+    dht: str | None = Field(default=None, max_length=12)
 
 
 class HeartbeatIn(_Loose):
@@ -263,9 +266,9 @@ def heartbeat(body: HeartbeatIn, request: Request, dev: CurrentDevice, db: DbSes
 
 @router.post("/presence")
 def presence(body: PresenceIn, request: Request, dev: CurrentDevice, db: DbSession):
-    engine.presence(db, _ctx(request, dev), dev, body.present, body.distance_cm)
+    out = engine.presence(db, _ctx(request, dev), dev, body.present, body.distance_cm)
     db.commit()
-    return {"ok": True}
+    return out
 
 
 @router.post("/access/start")
@@ -273,6 +276,23 @@ def access_start(body: StartIn, request: Request, dev: CurrentDevice, db: DbSess
     """Card read (with distance). Immediate denials come back without ``session_id``."""
     s = get_settings()
     sess = engine.start(db, _ctx(request, dev), dev, body.uid, body.distance_cm)
+    db.commit()
+    if sess.state == AccessState.DENIED:
+        return {"state": "DENIED", "reason_code": sess.reason_code}
+    return {"session_id": sess.id, "state": str(sess.state), "poll_ms": s.access_poll_ms,
+            "timeout_s": s.access_session_timeout_s}
+
+
+class ExitButtonIn(_Loose):
+    source: Literal["BUTTON"] = "BUTTON"
+
+
+@router.post("/exit-button")
+def exit_button(body: ExitButtonIn, request: Request, dev: CurrentDevice, db: DbSession):
+    """Inside exit button. Opens only if someone is inside this door (backend knowledge);
+    otherwise ``{state: DENIED, reason_code: NOBODY_INSIDE}``. Same polling flow as a card."""
+    s = get_settings()
+    sess = engine.exit_button(db, _ctx(request, dev), dev)
     db.commit()
     if sess.state == AccessState.DENIED:
         return {"state": "DENIED", "reason_code": sess.reason_code}
@@ -290,6 +310,8 @@ def access_poll(session_id: SESSION_ID, request: Request, dev: CurrentDevice, db
         out["reason_code"] = sess.reason_code
     if sess.state == AccessState.GRANTED:
         out["open_ms"] = dev.door_open_ms
+        # For the door LCD ("Bienvenido" + name). Only on GRANTED, inside the signed response.
+        out["greeting"], out["display_name"] = engine.lcd_greeting(db, sess)
     return out
 
 
@@ -312,3 +334,44 @@ def device_event(body: EventIn, request: Request, dev: CurrentDevice, db: DbSess
     engine.device_event(db, _ctx(request, dev), dev, body.type, body.detail)
     db.commit()
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ main entrance (QR → LED)
+class EntrancePollIn(_Loose):
+    pass
+
+
+class EntranceAckIn(_Loose):
+    shown: bool = True
+
+
+@router.post("/entrance/poll")
+def entrance_poll(body: EntrancePollIn, request: Request, dev: CurrentDevice, db: DbSession):
+    """Next LED signal of the main entrance, delivered **once**: ``{signal: null}`` or
+    ``{signal: {id, result, led_ms, display_name}}``. Signals not polled within 10 s expire."""
+    signal = entrance_service.poll_signal(db, _ctx(request, dev), dev)
+    db.commit()
+    return {"signal": signal}
+
+
+@router.post("/entrance/{signal_id}/ack")
+def entrance_ack(signal_id: SESSION_ID, body: EntranceAckIn, request: Request, dev: CurrentDevice, db: DbSession):
+    entrance_service.ack_signal(db, _ctx(request, dev), dev, signal_id, body.shown)
+    db.commit()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ DHT11
+class EnvironmentIn(_Loose):
+    temperature_c: float | None = Field(default=None, ge=-40, le=125, allow_inf_nan=False)
+    humidity_pct: float | None = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    sensor: Literal["OK", "ERROR"] = "OK"
+
+
+@router.post("/environment")
+def environment(body: EnvironmentIn, request: Request, dev: CurrentDevice, db: DbSession):
+    """Server-room reading every 10 s. Reply ``{ok, fan, alarm}`` (fan with 1 °C hysteresis).
+    ``sensor:"OK"`` without both values is treated as ``ERROR`` (fail-safe)."""
+    out = environment_service.record(db, _ctx(request, dev), dev, body.temperature_c, body.humidity_pct, body.sensor)
+    db.commit()
+    return out

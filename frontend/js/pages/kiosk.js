@@ -1,11 +1,13 @@
 // Kiosco junto a la puerta (pasos 11–13): cuando el ESP32 lee una tarjeta autorizada, el backend
 // avisa por WebSocket; el kiosco toma N capturas distintas (~200 ms entre ellas) y las envía a
 // POST /vision/verify. Autenticación: sesión de administrador o token de kiosco.
+import { startClock } from "/js/brand.js";
 import { CameraError, captureJpeg, isActive, listCameras, startCamera } from "/js/camera.js";
 import { reasonText } from "/js/ui.js";
 import { connectEvents } from "/js/ws.js";
 
 const $ = (id) => document.getElementById(id);
+startClock($("clock"));
 const params = new URLSearchParams(location.search);
 const device = (params.get("device") || "DC-DOOR-01").toUpperCase();
 const KEY = "dcg-kiosk-token";
@@ -45,7 +47,7 @@ async function ensureAuth() {
   try {
     const p = await call("GET", `/kiosk/pending?device_code=${encodeURIComponent(device)}`);
     frames = p.frames ?? 5;
-    $("device-name").textContent = `· ${p.device.name} (${p.device.device_code})`;
+    $("device-name").textContent = `${p.device.name} (${p.device.device_code})`;
     return p;
   } catch (e) {
     if (e.status === 401 || e.status === 403) {

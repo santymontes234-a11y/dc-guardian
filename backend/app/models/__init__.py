@@ -5,6 +5,8 @@ from app.models.admin import Admin
 from app.models.authorization import AuthorizationRequest
 from app.models.card import RfidCard, normalize_uid
 from app.models.engineer import EMBEDDING_DIM, Engineer, FaceEmbedding
+from app.models.entrance import EntranceEvent, QrCredential
+from app.models.environment import EnvironmentReading
 from app.models.facility import Area, Device, DeviceNonce
 from app.models.monitoring import Alert, AuditLog
 
@@ -19,7 +21,10 @@ __all__ = [
     "Device",
     "DeviceNonce",
     "Engineer",
+    "EntranceEvent",
+    "EnvironmentReading",
     "FaceEmbedding",
+    "QrCredential",
     "RfidCard",
     "normalize_uid",
 ]

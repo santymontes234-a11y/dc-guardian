@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/engineers.css">
+  <link rel="stylesheet" href="/css/credential.css">
 </head>
 <body data-page="engineers">
 <main id="content" class="en">
@@ -73,6 +74,19 @@
       <div id="cards"></div>
     </section>
 
+    <section class="card" id="qr-card">
+      <div class="en-card-head">
+        <h2>Credencial QR</h2>
+        <div class="row admin-only">
+          <button type="button" class="btn btn-primary" id="qr-issue">Generar QR</button>
+          <button type="button" class="btn btn-danger" id="qr-revoke" hidden>Revocar</button>
+        </div>
+      </div>
+      <div id="qr-status"><p class="muted" style="margin:0">Cargando…</p></div>
+      <p class="muted small-note">Da acceso solo a la <b>entrada principal</b> y únicamente con una autorización aprobada y vigente.
+        El código completo se muestra una sola vez al generarlo; emitir uno nuevo revoca el anterior.</p>
+    </section>
+
     <section class="card en-danger admin-only" id="danger">
       <div class="en-card-head"><h2>Eliminación de datos</h2></div>
       <p class="muted" style="margin-top:0;font-size:14px">Borra de forma <strong>irreversible</strong> los datos personales y biométricos.
@@ -112,6 +126,21 @@
       </footer>
     </form>
   </dialog>
+
+  <!-- Credencial QR recién emitida (se muestra una sola vez) -->
+  <dialog class="en-modal wide" id="qr-dlg" aria-labelledby="qr-title">
+    <h2 id="qr-title">Credencial QR emitida</h2>
+    <div class="warn-box" role="alert">Este código <b>solo se muestra ahora</b>. Imprímalo o descárguelo antes de cerrar:
+      después solo se conserva su huella (hash) y el prefijo.</div>
+    <div class="cred-preview" id="qr-preview"></div>
+    <footer class="row" style="justify-content:flex-end;margin-top:12px">
+      <button type="button" class="btn" id="qr-copy">Copiar texto (demostración)</button>
+      <button type="button" class="btn" id="qr-png">Descargar PNG</button>
+      <button type="button" class="btn" id="qr-print">Imprimir</button>
+      <button type="button" class="btn btn-primary" id="qr-close">Cerrar</button>
+    </footer>
+  </dialog>
+  <div id="cred-print" aria-hidden="true"></div>
 
   <!-- Re-registro facial -->
   <dialog class="en-modal wide" id="face-dlg" aria-labelledby="face-title">

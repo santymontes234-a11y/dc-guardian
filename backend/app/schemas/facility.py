@@ -9,6 +9,9 @@ from app.schemas.common import DbId, Text
 
 Code = Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]{1,29}$")]
 # (the pattern runs before to_upper, hence the mixed-case classes)
+# Area codes may also use "_" (ENTRADA_PRINCIPAL, SALA_SERVIDORES — contrato-qr-dht11.md §0).
+AreaCode = Annotated[str, StringConstraints(strip_whitespace=True, to_upper=True,
+                                            pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$")]
 
 
 # ----------------------------------------------------------------- cards
@@ -60,7 +63,7 @@ class CardOut(BaseModel):
 
 # ----------------------------------------------------------------- areas
 class AreaCreate(BaseModel):
-    code: Code
+    code: AreaCode
     name: Text(2, 80)
     security_level: int = Field(default=3, ge=1, le=5)
     description: Text(0, 500) | None = None

@@ -61,13 +61,20 @@ class Backend {
  public:
   virtual ~Backend() = default;
   virtual ApiResult heartbeat(const HeartbeatInfo& hb, const DeviceConfig& cur, HeartbeatReply& out) = 0;
-  virtual ApiResult presence(bool present, float distanceCm, float thresholdCm) = 0;
+  virtual ApiResult presence(bool present, float distanceCm, float thresholdCm, PresenceReply& out) = 0;
   virtual ApiResult startAccess(const std::string& uid, float distanceCm, const std::string& fw,
                                 StartReply& out) = 0;
   virtual ApiResult pollAccess(const std::string& sessionId, float distanceCm, DecisionReply& out) = 0;
   virtual ApiResult confirmOpened(const std::string& sessionId, uint32_t openMs) = 0;
   virtual ApiResult confirmClosed(const std::string& sessionId, const char* reason) = 0;
   virtual ApiResult event(const char* type, const std::string& detail) = 0;
+  // Inside exit button: the backend opens only if someone is inside (same reply as start).
+  virtual ApiResult exitButton(StartReply& out) = 0;
+  // DHT11 reading (§11) and main-entrance signal (§10). Defaults fail closed (no network),
+  // so test doubles that do not care about these features need not implement them.
+  virtual ApiResult environment(const EnvReading& /*r*/, EnvReply& /*out*/) { return ApiResult::NETWORK_ERROR; }
+  virtual ApiResult entrancePoll(EntrancePollReply& /*out*/) { return ApiResult::NETWORK_ERROR; }
+  virtual ApiResult entranceAck(const std::string& /*signalId*/) { return ApiResult::NETWORK_ERROR; }
 };
 
 class BackendClient : public Backend {
@@ -76,13 +83,17 @@ class BackendClient : public Backend {
       : s_(std::move(s)), http_(http), clock_(clock), rng_(rng) {}
 
   ApiResult heartbeat(const HeartbeatInfo& hb, const DeviceConfig& cur, HeartbeatReply& out) override;
-  ApiResult presence(bool present, float distanceCm, float thresholdCm) override;
+  ApiResult presence(bool present, float distanceCm, float thresholdCm, PresenceReply& out) override;
   ApiResult startAccess(const std::string& uid, float distanceCm, const std::string& fw,
                         StartReply& out) override;
   ApiResult pollAccess(const std::string& sessionId, float distanceCm, DecisionReply& out) override;
   ApiResult confirmOpened(const std::string& sessionId, uint32_t openMs) override;
   ApiResult confirmClosed(const std::string& sessionId, const char* reason) override;
   ApiResult event(const char* type, const std::string& detail) override;
+  ApiResult exitButton(StartReply& out) override;
+  ApiResult environment(const EnvReading& r, EnvReply& out) override;
+  ApiResult entrancePoll(EntrancePollReply& out) override;
+  ApiResult entranceAck(const std::string& signalId) override;
 
   // Last failure detail, for logs / heartbeat diagnostics.
   const std::string& lastError() const { return lastError_; }

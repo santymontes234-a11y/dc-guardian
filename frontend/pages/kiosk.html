@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kiosco facial · DC Guardian</title>
+  <title>Kiosco facial · Telecom Conecta · DC Guardian</title>
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
@@ -11,9 +11,15 @@
 </head>
 <body class="kiosk">
   <main class="kiosk-main">
-    <header class="row">
-      <b>DC Guardian · Kiosco</b><span class="muted" id="device-name"></span>
-      <span class="spacer"></span><span id="live" class="badge badge-muted">Conectando…</span>
+    <header class="kiosk-head">
+      <div class="kiosk-brand">
+        <span class="kiosk-company">Telecom Conecta</span>
+        <h1>Sala de servidores — Verificación facial</h1>
+        <span class="muted" id="device-name"></span>
+      </div>
+      <span class="spacer"></span>
+      <time class="kiosk-clock" id="clock"></time>
+      <span id="live" class="badge badge-muted" role="status">Conectando…</span>
     </header>
 
     <section class="stage">
@@ -27,6 +33,7 @@
     <footer class="row">
       <select id="camera" aria-label="Cámara"></select>
       <button class="btn" id="start-cam">Activar cámara</button>
+      <a class="kiosk-link" href="/pages/entrance.html">Entrada principal (QR)</a>
       <span class="spacer"></span>
       <span class="muted" id="countdown"></span>
     </footer>

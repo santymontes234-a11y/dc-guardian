@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy import func, select
@@ -14,7 +14,10 @@ from app.db.types import utcnow
 from app.models import AccessSession, Alert, Device, Engineer
 from app.models.enums import AccessDirection, AccessState, AlertSeverity
 from app.schemas.common import Page, PageParams, PathId, QueryId, SaneDatetime, page_params
+from app.schemas.entrance import AccessLogRow, EnvironmentLatest, EnvironmentSeries
 from app.services import access_engine as engine
+from app.services import access_log as access_log_service
+from app.services import environment as environment_service
 from app.services import alerts as alerts_service
 from app.services import requests as requests_service
 
@@ -23,6 +26,45 @@ alerts = APIRouter(prefix="/alerts", tags=["alerts"])
 stats = APIRouter(prefix="/stats", tags=["dashboard"])
 hardware = APIRouter(prefix="/devices", tags=["devices"])
 system = APIRouter(prefix="/system", tags=["system"])
+access_log = APIRouter(prefix="/access-log", tags=["access log (bitácora)"])
+environment = APIRouter(prefix="/monitoring/environment", tags=["environment (DHT11)"])
+DeviceCodeQ = Annotated[str | None, Query(pattern=r"^[A-Za-z0-9-]{2,30}$")]
+
+
+# ------------------------------------------------------------------ access log (bitácora)
+@access_log.get("", response_model=Page[AccessLogRow])
+def list_access_log(
+    _: AdminOrAuditor,
+    db: ReadDb,
+    page: Annotated[PageParams, Depends(page_params)],
+    method: Literal["QR", "RFID+ROSTRO", "BOTON_SALIDA"] | None = None,
+    result: Literal["GRANTED", "DENIED"] | None = None,
+    zone: Annotated[str | None, Query(max_length=30, description="Código de área, p. ej. ENTRADA_PRINCIPAL")] = None,
+    engineer_id: QueryId = None,
+    since: SaneDatetime | None = None,
+    until: SaneDatetime | None = None,
+):
+    """Every decided access attempt, newest first, in every zone: QR at ``ENTRADA_PRINCIPAL``
+    and card + face at the server room. Row: time, person, position, zone, method, direction
+    and result (``GRANTED``/``DENIED`` + ``reason_code``)."""
+    items, total = access_log_service.list_(db, page, method=method, result=result, zone=zone,
+                                            engineer_id=engineer_id, since=since, until=until)
+    return Page(items=items, total=total, limit=page.limit, offset=page.offset)
+
+
+# ------------------------------------------------------------------ environment (DHT11)
+@environment.get("/latest", response_model=EnvironmentLatest)
+def environment_latest(_: AdminOrAuditor, db: ReadDb, device_code: DeviceCodeQ = None):
+    """Last server-room reading (temperature, humidity, sensor, fan, alarm) and thresholds."""
+    return environment_service.latest(db, device_code)
+
+
+@environment.get("", response_model=EnvironmentSeries)
+def environment_series(_: AdminOrAuditor, db: ReadDb,
+                       minutes: Annotated[int, Query(ge=1, le=7 * 24 * 60)] = 60,
+                       device_code: DeviceCodeQ = None):
+    """Readings of the last ``minutes`` (oldest first), at most 1440 points."""
+    return environment_service.series(db, utcnow(), minutes, device_code)
 
 
 # ------------------------------------------------------------------ access sessions

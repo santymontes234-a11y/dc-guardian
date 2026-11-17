@@ -100,8 +100,7 @@ class Flow:
 
     def access(self, uid: str, *, face_seed: int | None, distance: float = 30, close: bool = True):
         """7–17 from the door's point of view."""
-        d = self.door.sim
-        d.set_distance(distance)  # 7–8: walks up; HC-SR04 sees presence under the threshold
+        d = self.door.sim  # (the HC-SR04 is inside the room: it plays no part in the access)
         sent = {}
 
         def between_polls(i):

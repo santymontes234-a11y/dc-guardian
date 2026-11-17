@@ -39,11 +39,11 @@ Las pruebas E2E son deterministas:
 | Solicitud pendiente | `test_pending_request` | `REQUEST_PENDING` |
 | Autorización revocada | `test_revoked_authorization`, `test_revoked_between_face_and_opening` | `AUTH_REVOKED`, también si se revoca **entre** el rostro y la apertura (paso 14) |
 | ESP32 desconectado | `test_esp32_disconnected` | Sin latido > 45 s → `OFFLINE` + `DEVICE_OFFLINE` + evento WS. Vuelve con el siguiente latido. Si el ESP32 no alcanza el backend, la puerta sigue cerrada |
-| Sensor sin respuesta | `test_sensor_without_response` | Latido con HC-SR04 en `TIMEOUT` → alerta `SENSOR_FAULT` y estado visible. `start` con distancia -1 → `SENSOR_ERROR`. Si falla en el momento de decidir → `SENSOR_ERROR` |
+| Sensor sin respuesta | `test_sensor_without_response` | Latido con HC-SR04 en `TIMEOUT` → alerta `SENSOR_FAULT` y estado visible. El acceso **no** se bloquea: `start` con distancia -1 → `AWAITING_FACE` y, con el rostro, `GRANTED` (el sensor está dentro de la sala, protocolo §9) |
 
 ### Pruebas adicionales
 
-- `test_presence_lost_and_timeout`: se aleja antes de la decisión → `PRESENCE_LOST`. Nadie mira a la cámara en 30 s → `TIMEOUT`.
+- `test_inside_sensor_is_not_an_access_factor_and_timeout`: la distancia del HC-SR04 no influye en la decisión (ya no existe `PRESENCE_LOST` en el acceso). Nadie mira a la cámara en 30 s → `TIMEOUT`.
 - `test_repeated_failures_lock_the_card`: 3 fallos en 5 min → `REPEATED_FAILURES` CRITICAL y tarjeta bloqueada 10 min (`CARD_LOCKED`).
 - `test_device_protocol_rejects_forgery_and_replay`:
   - Firma falsa → 401 firmado + `DEVICE_AUTH_FAIL`.
@@ -55,6 +55,18 @@ Las pruebas E2E son deterministas:
 - `test_emergency_close_via_heartbeat`: `EMERGENCY_CLOSE` se entrega una sola vez.
 - `test_dashboard_shows_everything`: indicadores, denegaciones por motivo, alertas, dispositivos y últimos intentos.
 - `test_websocket_streams_events`, `test_websocket_requires_auth`: eventos en tiempo real y rechazo anónimo (4401).
+
+### Escenarios añadidos (2026-11-15 y 2026-11-17)
+
+Estado al 2026-11-17: `pytest tests/e2e` → **78 aprobadas**; firmware nativo (`pio test -e native`) → **129 aprobadas**;
+firmware de integración (`test/integration`) → **13 aprobadas**.
+
+| Escenario | Pruebas | Resultado esperado y verificado |
+|---|---|---|
+| Intrusión (HC-SR04 dentro de la sala) | `test_intrusion_alarm.py`: `test_someone_inside_with_nobody_authorized_triggers_the_alarm`, `test_no_alarm_while_an_authorized_engineer_is_inside`, `test_alarm_again_after_the_engineer_left`, `test_crossing_the_door_is_not_an_intrusion`, `test_leaving_the_room_never_alarms` | Presencia sin nadie autorizado dentro → `alarm:true` + alerta `INTRUSION` CRITICAL. Sin alarma con un ingeniero dentro ni al cruzar la puerta. Firmware: alarma local sin conexión (`test_controller`) |
+| Botón de salida interior | `test_exit_button_and_lcd.py`: `test_button_does_nothing_when_nobody_is_inside`, `test_button_opens_from_inside_without_presence_and_records_exit`, `test_button_with_several_people_inside_opens_without_attribution` | Nadie dentro → `NOBODY_INSIDE`. Una persona dentro → `FACE_OK` → `GRANTED` con «Hasta pronto» y `access.exit`. Firmware: ignorado sin conexión |
+| Entrada principal (QR) | `test_entrance_qr.py` (emisión y revocación, orden de denegaciones, límite de 20/min, señal entregada una vez, caducidad a 10 s, respuestas firmadas ligadas al nonce, bitácora QR/RFID), `test_sim_entrance_environment.py` | QR válido con Registro 2 → señal `GRANTED` → LED verde de la entrada y ack. Firmware (`test_entrance`): firma inválida, `id`/`led_ms` erróneos o resultado desconocido ⇒ ignorada; **nunca mueve el servo** |
+| DHT11 | `test_environment.py` (histéresis del ventilador y re-armado de alertas, `TEMPERATURA_CRITICA` sin duplicados, `HUMEDAD_FUERA_DE_RANGO`, `SENSOR_DHT_ERROR`, 422 firmado, respuesta sin firma rechazada, consultas `latest` y serie), `test_entrance_qr.py::test_heartbeat_sends_dht_thresholds_and_accepts_dht_sensor` | El backend decide `fan`/`alarm`. Firmware (`test_environment`): 3 fallos ⇒ `ERROR` y ventilador apagado; firma inválida o sin conexión ⇒ respaldo local con los mismos umbrales |
 
 ## Verificación en vivo (servidor real, modo simulación)
 
@@ -68,7 +80,7 @@ Las acciones se hicieron con los botones del **panel Simulador**, que envía pet
 | Segunda pasada | Salida concedida sin rostro (comportamiento anterior a la revisión de seguridad; ahora la salida pide rostro, ver abajo) |
 | «Rostro de otro ingeniero» | `FACE_MISMATCH` (0,19, 0/5), la puerta no se abre |
 | UID `0BADC0DE` | `UNKNOWN_CARD` |
-| HC-SR04 sin respuesta | Alerta `SENSOR_FAULT`. El ESP32 ignora la tarjeta sin presencia (regla del firmware) |
+| HC-SR04 sin respuesta | Alerta `SENSOR_FAULT`. (En esta sesión de 2026-11-14 el firmware aún exigía presencia; desde el 2026-11-15 el sensor está dentro de la sala y la tarjeta se envía igual, protocolo §9) |
 | ESP32 desconectado | A los 53 s: `OFFLINE` + alerta `DEVICE_OFFLINE`, visibles en el panel en tiempo real. Al reconectar vuelve a `ONLINE` |
 | **Firmware C++ real** (`host_runner`, el núcleo `dcg_core` compilado para PC) contra el gateway real | Respuestas firmadas aceptadas, `GRANTED`, servo a 90°, `OPENED` y `CLOSED:TIMER` confirmados. Auditoría `card_read … entry, door_closed` |
 | Páginas Panel, Tarjetas, Accesos, Alertas, Auditoría, Ingenieros, Solicitudes y Kiosco | Cargan con el menú común, sin errores de JavaScript. La verificación de la cadena de auditoría da «Íntegra» |
@@ -87,7 +99,7 @@ Revisión en solo lectura del código de F5–F8. Cada hallazgo corregido tiene 
 | M4 | MEDIA | Gateway: cuerpo sin límite y una escritura de auditoría por cada petición anónima (DoS) | Cuerpo de 4 KiB como máximo (413). Las peticiones sin dispositivo válido solo se auditan 10 veces por minuto y por IP |
 | M5 | MEDIA | Redirección abierta en `?next=` del login (`/\evil`, `/%09/evil`) | Se acepta solo si `new URL(next).origin` es el propio origen |
 | B1 | BAJA | El WebSocket seguía abierto tras el logout | La sesión se revalida cada 60 s y se cierra con 4401 |
-| B4 | BAJA | Cualquier tarjeta, incluso desconocida, anulaba el intento en curso | Solo lo anula una tarjeta registrada y vinculada, con presencia |
+| B4 | BAJA | Cualquier tarjeta, incluso desconocida, anulaba el intento en curso | Solo lo anula una tarjeta registrada, activa y vinculada (desde el 2026-11-15 ya no se exige presencia: el HC-SR04 está dentro de la sala) |
 | B5 | BAJA | Los parámetros de query duplicados podían reordenarse sin invalidar la firma | Se rechazan (`DEVICE_BAD_QUERY`) |
 | B6 | BAJA | XSS por el nombre de la cámara USB en el kiosco | `new Option(label, id)` |
 | B8 | BAJA | En la auditoría no se distinguían las acciones del kiosco de las del planificador | Actor `system/kiosk` |

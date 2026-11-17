@@ -39,6 +39,7 @@
 #define DCG_SERVO_MIN_US 500        // SG90: 500–2400 µs. MG996R: 1000–2000 µs typical
 #define DCG_SERVO_MAX_US 2400
 #define DCG_SERVO_TRAVEL_MS 600     // sweep time 0°→90° (gentler current peak)
+#define DCG_SERVO_INVERT 0          // 1 = invert the rotation (servo mounted the other way round)
 
 // ---------------------------------------------------------------- LCD 2004 I2C (optional)
 #define DCG_LCD_ENABLED 1

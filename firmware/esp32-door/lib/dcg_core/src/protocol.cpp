@@ -82,6 +82,7 @@ std::string buildHeartbeatBody(const HeartbeatInfo& hb) {
   JsonObject sensors = doc["sensors"].to<JsonObject>();
   sensors["rfid"] = hb.rfidOk ? "OK" : "ERROR";
   sensors["ultrasonic"] = hb.ultrasonicOk ? "OK" : "TIMEOUT";
+  sensors["dht"] = hb.dhtOk ? "OK" : "ERROR";
   return serialize(doc);
 }
 
@@ -111,6 +112,53 @@ std::string buildClosedBody(const char* reason) {
   JsonDocument doc;
   doc["reason"] = reason;
   return serialize(doc);
+}
+
+std::string buildExitButtonBody() {
+  JsonDocument doc;
+  doc["source"] = "BUTTON";
+  return serialize(doc);
+}
+
+std::string buildEnvironmentBody(const EnvReading& r) {
+  JsonDocument doc;
+  const bool ok = r.sensorOk && std::isfinite(r.temperatureC) && std::isfinite(r.humidityPct);
+  if (ok) {
+    doc["temperature_c"] = std::round(double(r.temperatureC) * 10.0) / 10.0;
+    doc["humidity_pct"] = std::round(double(r.humidityPct) * 10.0) / 10.0;
+  } else {
+    doc["temperature_c"] = nullptr;
+    doc["humidity_pct"] = nullptr;
+  }
+  doc["sensor"] = ok ? "OK" : "ERROR";
+  return serialize(doc);
+}
+
+std::string buildEntrancePollBody() { return "{}"; }
+
+std::string buildEntranceAckBody() {
+  JsonDocument doc;
+  doc["shown"] = true;
+  return serialize(doc);
+}
+
+bool validTempPair(float highC, float criticalC) {
+  return highC >= 15.0f && highC <= 45.0f && criticalC >= 15.0f && criticalC <= 50.0f &&
+         criticalC > highC;
+}
+
+bool validHumidityPair(float lowPct, float highPct) {
+  return lowPct >= 0.0f && lowPct <= 100.0f && highPct >= 0.0f && highPct <= 100.0f &&
+         highPct > lowPct;
+}
+
+std::string sanitizeLcdText(const std::string& s, size_t maxLen) {
+  std::string out;
+  for (char c : s) {
+    if (out.size() >= maxLen) break;
+    if (c >= 0x20 && c < 0x7F) out += c;  // HD44780 ROM A00: plain ASCII only
+  }
+  return out;
 }
 
 std::string buildEventBody(const char* type, const std::string& detail) {
@@ -145,6 +193,20 @@ bool parseHeartbeatReply(const std::string& body, const DeviceConfig& current, H
       uint32_t v = hb.as<uint32_t>();
       if (v >= 5 && v <= 60) out.config.heartbeatS = v;
     }
+    // Environment thresholds: each pair is accepted only as a consistent whole.
+    EnvThresholds& env = out.config.env;
+    auto num = [&](const char* key, float fallback) {
+      JsonVariantConst v = cfg[key];
+      if (!v.is<float>()) return fallback;
+      float f = v.as<float>();
+      return std::isfinite(f) ? f : fallback;
+    };
+    const float hi = num("temp_high_c", env.tempHighC);
+    const float crit = num("temp_critical_c", env.tempCriticalC);
+    if (validTempPair(hi, crit)) { env.tempHighC = hi; env.tempCriticalC = crit; }
+    const float hlo = num("humidity_low_pct", env.humidityLowPct);
+    const float hhi = num("humidity_high_pct", env.humidityHighPct);
+    if (validHumidityPair(hlo, hhi)) { env.humidityLowPct = hlo; env.humidityHighPct = hhi; }
   }
 
   // Whitelist: the only remote command is closing. Opening never arrives via heartbeat.
@@ -174,6 +236,54 @@ bool parseStartReply(const std::string& body, StartReply& out) {
   return true;
 }
 
+bool parsePresenceReply(const std::string& body, PresenceReply& out) {
+  JsonDocument doc;
+  if (deserializeJson(doc, body) || !doc.is<JsonObject>()) return false;
+  out = PresenceReply{};
+  out.alarm = doc["alarm"] | false;
+  out.alarmMs = clampT<uint32_t>(doc["alarm_s"] | 20u, 5u, 120u) * 1000u;
+  return true;
+}
+
+bool parseEnvReply(const std::string& body, EnvReply& out) {
+  JsonDocument doc;
+  if (deserializeJson(doc, body) || !doc.is<JsonObject>()) return false;
+  JsonVariantConst fan = doc["fan"];
+  JsonVariantConst alarm = doc["alarm"];
+  if (!fan.is<bool>() || !alarm.is<bool>()) return false;
+  out = EnvReply{};
+  out.fan = fan.as<bool>();
+  out.alarm = alarm.as<bool>();
+  return true;
+}
+
+bool parseEntrancePollReply(const std::string& body, EntrancePollReply& out) {
+  JsonDocument doc;
+  if (deserializeJson(doc, body) || !doc.is<JsonObject>()) return false;
+  out = EntrancePollReply{};
+  JsonVariantConst sig = doc["signal"];
+  if (sig.isNull()) return true;  // nothing pending
+  if (!sig.is<JsonObjectConst>()) return false;
+  EntranceSignal& s = out.signal;
+  s.id = str(sig["id"]);
+  if (!isValidSignalId(s.id)) return false;
+  s.rawResult = sanitizeLcdText(str(sig["result"]), 20);
+  if (s.rawResult == "GRANTED") s.result = EntranceResult::GRANTED;
+  else if (s.rawResult == "DENIED") s.result = EntranceResult::DENIED;
+  else s.result = EntranceResult::UNKNOWN;
+  if (s.result == EntranceResult::GRANTED) {
+    JsonVariantConst led = sig["led_ms"];
+    if (!led.isNull()) {
+      if (!led.is<uint32_t>()) return false;
+      s.ledMs = led.as<uint32_t>();
+    }
+    if (s.ledMs < kMinEntranceLedMs || s.ledMs > kMaxEntranceLedMs) return false;
+  }
+  s.displayName = sanitizeLcdText(str(sig["display_name"]), 40);
+  out.hasSignal = true;
+  return true;
+}
+
 bool parseDecisionReply(const std::string& body, DecisionReply& out) {
   JsonDocument doc;
   if (deserializeJson(doc, body) || !doc.is<JsonObject>()) return false;
@@ -187,6 +297,8 @@ bool parseDecisionReply(const std::string& body, DecisionReply& out) {
     if (!om.is<uint32_t>()) return false;
     out.openMs = om.as<uint32_t>();
     if (out.openMs < kMinOpenMs || out.openMs > kMaxOpenMs) return false;
+    out.greeting = sanitizeLcdText(str(doc["greeting"]), 20);
+    out.displayName = sanitizeLcdText(str(doc["display_name"]), 40);
   }
   return true;
 }

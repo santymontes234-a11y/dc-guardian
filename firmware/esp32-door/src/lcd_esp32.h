@@ -37,7 +37,10 @@ class Lcd2004 {
   void onState(SystemState s) { state_.store(s); }
   void onCard(const std::string& uid);
   void onSessionPhase(const std::string& state);
+  void onGranted(const std::string& greeting, const std::string& name);
   void onFeedback(Feedback f, const std::string& reason);
+  void onEntrance(bool granted, const std::string& name);  // main entrance QR outcome
+  void cancelEntrance();
   void setThreshold(float cm) { thresholdCm_.store(cm); }
   void setConfigError();
 

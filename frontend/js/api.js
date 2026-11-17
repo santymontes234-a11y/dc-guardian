@@ -3,6 +3,7 @@
 //   const page = await api.get("/requests", { status: "PENDIENTE" });
 // - Rutas relativas a /api/v1. La sesión viaja en la cookie HttpOnly (no hay token en JS).
 // - 401 fuera del login → redirige a /index.html?next=<página actual>.
+// - `headers` opcional (p. ej. X-Kiosk-Token en las pantallas de kiosco, con noRedirect: true).
 // - Cualquier respuesta no 2xx lanza ApiError { status, code, message, details, correlationId }.
 
 const BASE = "/api/v1";
@@ -34,8 +35,8 @@ function redirectToLogin() {
   window.location.href = `/index.html?next=${next}`;
 }
 
-async function request(method, path, { body, query, form, noRedirect = false } = {}) {
-  const init = { method, credentials: "same-origin", headers: { Accept: "application/json" } };
+async function request(method, path, { body, query, form, noRedirect = false, headers = null } = {}) {
+  const init = { method, credentials: "same-origin", headers: { ...(headers ?? {}), Accept: "application/json" } };
   if (form) {
     init.body = form; // FormData: el navegador pone el Content-Type con boundary
   } else if (body !== undefined) {

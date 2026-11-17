@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrada principal — Acceso QR · Telecom Conecta</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/kiosk.css">
+  <link rel="stylesheet" href="/css/entrance.css">
+</head>
+<body class="kiosk entrance">
+  <main class="kiosk-main entrance-main">
+    <header class="kiosk-head">
+      <div class="kiosk-brand">
+        <span class="kiosk-company">Telecom Conecta</span>
+        <h1>Entrada principal — Acceso QR</h1>
+      </div>
+      <span class="spacer"></span>
+      <time class="kiosk-clock" id="clock"></time>
+      <span id="live" class="badge badge-muted" role="status">Conectando…</span>
+    </header>
+
+    <div class="entrance-grid">
+      <section class="stage scan-stage" id="stage" aria-label="Vista de la cámara">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="scan-guide" id="guide" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="overlay">
+          <div class="msg" id="msg">Muestre su código QR a la cámara</div>
+          <div class="sub" id="sub">Coloque la credencial dentro del recuadro, a unos 20 cm</div>
+        </div>
+      </section>
+
+      <aside class="entrance-side">
+        <div class="result" id="result" data-state="idle" role="status" aria-live="assertive" aria-atomic="true">
+          <div class="result-title" id="result-title">Esperando código QR</div>
+          <div class="result-detail" id="result-detail">La puerta permanece cerrada hasta validar la credencial.</div>
+        </div>
+
+        <div class="door-leds" aria-label="Indicadores de la puerta de la entrada principal">
+          <div class="led-row">
+            <span class="led green" id="led-green" aria-hidden="true"></span>
+            <span>LED verde de la puerta</span>
+            <b id="led-green-state">Apagado</b>
+          </div>
+          <div class="led-row">
+            <span class="led red" id="led-red" aria-hidden="true"></span>
+            <span>LED rojo (acceso denegado)</span>
+            <b id="led-red-state">Apagado</b>
+          </div>
+          <p class="muted small">Representación visual: en la maqueta los LED los enciende el ESP32 al recibir la señal firmada.</p>
+        </div>
+
+        <form class="manual" id="manual" autocomplete="off">
+          <label for="manual-text">Texto del QR (demostración sin cámara)</label>
+          <div class="row">
+            <input id="manual-text" class="mono" placeholder="DCG-QR1:…" maxlength="200" spellcheck="false">
+            <button class="btn btn-primary" type="submit">Validar</button>
+          </div>
+        </form>
+      </aside>
+    </div>
+
+    <footer class="row">
+      <label class="sr-only" for="camera">Cámara</label>
+      <select id="camera"></select>
+      <button class="btn" id="start-cam" type="button">Activar cámara</button>
+      <a class="kiosk-link" href="/pages/kiosk.html">Kiosco facial (sala de servidores)</a>
+      <span class="spacer"></span>
+      <span class="muted" id="device-name"></span>
+    </footer>
+
+    <dialog id="token-dialog">
+      <form method="dialog" class="stack" id="token-form">
+        <h2 style="margin:0">Token de kiosco</h2>
+        <p class="muted" style="margin:0">Inicia sesión como administrador o pega el token de kiosco
+          (Panel → <code>/api/v1/system/kiosk-token</code>).</p>
+        <label class="sr-only" for="token">Token de kiosco</label>
+        <input id="token" class="mono" autocomplete="off" required>
+        <div class="row"><a href="/index.html?next=/pages/entrance.html">Iniciar sesión</a><span class="spacer"></span>
+          <button class="btn btn-primary">Guardar</button></div>
+      </form>
+    </dialog>
+  </main>
+  <script src="/vendor/jsqr-1.4.0/jsQR.js"></script>
+  <script type="module" src="/js/pages/entrance.js"></script>
+</body>
+</html>

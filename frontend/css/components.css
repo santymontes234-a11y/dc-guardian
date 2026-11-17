@@ -84,3 +84,21 @@ dialog {
   width: min(520px, calc(100vw - 32px));
 }
 dialog::backdrop { background: rgb(0 0 0 / 40%); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* LED virtual (entrada principal, simulador). */
+.led {
+  display: inline-block; width: 18px; height: 18px; border-radius: 50%;
+  background: #4b5563; border: 2px solid rgb(0 0 0 / 30%); vertical-align: middle; flex: none;
+}
+.led.green.on { background: #22c55e; box-shadow: 0 0 12px 3px rgb(34 197 94 / 70%); }
+.led.red.on { background: #ef4444; box-shadow: 0 0 12px 3px rgb(239 68 68 / 70%); }
+.led.red.blink { animation: led-blink .5s steps(1, end) 6; }
+.led.amber.on { background: #f59e0b; box-shadow: 0 0 12px 3px rgb(245 158 11 / 70%); }
+@keyframes led-blink { 0% { background: #ef4444; box-shadow: 0 0 12px 3px rgb(239 68 68 / 70%); } 50% { background: #4b5563; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .led.red.blink { animation: none; background: #ef4444; } }
+.table .badge { white-space: nowrap; }

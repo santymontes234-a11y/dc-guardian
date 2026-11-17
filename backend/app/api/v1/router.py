@@ -33,6 +33,8 @@ api_router.include_router(monitoring.sessions)
 api_router.include_router(monitoring.alerts)
 api_router.include_router(monitoring.stats)
 api_router.include_router(monitoring.system)
+api_router.include_router(monitoring.access_log)
+api_router.include_router(monitoring.environment)
 api_router.include_router(device_gateway.router)
 
 if get_settings().simulation:  # virtual ESP32 control panel — never in production

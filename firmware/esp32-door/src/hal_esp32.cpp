@@ -1,5 +1,6 @@
 #include "hal_esp32.h"
 
+#include <DHT.h>
 #include <ESP32Servo.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -13,6 +14,7 @@ namespace dcg {
 namespace {
 
 Servo servo;
+DHT dht(PIN_DHT, DHT11);
 
 class Lock {
  public:
@@ -27,18 +29,28 @@ constexpr uint32_t kPingEveryMs = 60;      // HC-SR04 datasheet: ≥ 60 ms betwe
 constexpr uint32_t kEchoTimeoutUs = 25000; // ≈ 4.3 m round trip
 constexpr uint32_t kFlashMs = 1500;
 constexpr uint32_t kButtonDebounceMs = 50;
+constexpr uint32_t kDhtPeriodMs = 2000;          // DHT11: at most one read per second
+constexpr uint32_t kEntranceDeniedMs = 1200;     // red blink x3 (200 on / 200 off)
+constexpr uint32_t kEntranceBeepMs = 120;        // short beep on QR denied
 
 }  // namespace
 
 Esp32Hal::Esp32Hal(Esp32HalConfig cfg)
     : cfg_(cfg), door_(cfg.door), rfid_(PIN_RFID_SS, PIN_RFID_RST) {}
 
+// Logical door angle → physical servo angle (honours DCG_SERVO_INVERT).
+int Esp32Hal::servoAngle(int logical) const {
+  if (logical < 0) logical = 0;
+  if (logical > 180) logical = 180;
+  return cfg_.servoInvert ? 180 - logical : logical;
+}
+
 void Esp32Hal::begin() {
   // 1) Door: command the CLOSED position before anything else (fail-closed at boot).
   ESP32PWM::allocateTimer(0);
   servo.setPeriodHertz(50);
   servo.attach(PIN_SERVO, cfg_.servoMinUs, cfg_.servoMaxUs);
-  servo.write(cfg_.door.closedAngle);
+  servo.write(servoAngle(cfg_.door.closedAngle));
 
   // 2) Feedback + button
   pinMode(PIN_LED_GREEN, OUTPUT);
@@ -48,6 +60,10 @@ void Esp32Hal::begin() {
   digitalWrite(PIN_LED_RED, HIGH);
   digitalWrite(PIN_BUZZER, LOW);
   pinMode(PIN_EMERGENCY_BTN, INPUT_PULLUP);
+  pinMode(PIN_LED_ENTRANCE, OUTPUT);
+  digitalWrite(PIN_LED_ENTRANCE, LOW);   // main entrance closed at boot
+  pinMode(PIN_FAN, OUTPUT);
+  digitalWrite(PIN_FAN, LOW);
 
   // 3) Sensors
   pinMode(PIN_US_TRIG, OUTPUT);
@@ -60,6 +76,31 @@ void Esp32Hal::begin() {
   // 4) I/O task
   mtx_ = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(ioTaskEntry, "io", 4096, this, 3, nullptr, 1);
+  // DHT11: own low-priority task. A read blocks ~25 ms (20 ms start pulse + 4 ms of bits),
+  // so it must not run in the io task (servo / HC-SR04) nor in the main loop.
+  dht.begin();
+  xTaskCreatePinnedToCore(dhtTaskEntry, "dht", 3072, this, 1, nullptr, 1);
+}
+
+// ------------------------------------------------------------------ DHT11 task
+void Esp32Hal::dhtTaskEntry(void* self) { static_cast<Esp32Hal*>(self)->dhtLoop(); }
+
+void Esp32Hal::dhtLoop() {
+  vTaskDelay(pdMS_TO_TICKS(kDhtPeriodMs));  // the sensor needs ~1 s after power-up
+  TickType_t wake = xTaskGetTickCount();
+  for (;;) {
+    DhtSample s;
+    const bool ok = dht.read(true);  // force: our own 2 s period
+    s.temperatureC = dht.readTemperature(false, false);
+    s.humidityPct = dht.readHumidity(false);
+    s.ok = ok && !isnan(s.temperatureC) && !isnan(s.humidityPct);
+    {
+      Lock l(mtx_);
+      dhtSample_ = s;
+      dhtNew_ = true;
+    }
+    vTaskDelayUntil(&wake, pdMS_TO_TICKS(kDhtPeriodMs));
+  }
 }
 
 // ------------------------------------------------------------------ I/O task
@@ -86,14 +127,13 @@ void Esp32Hal::ioLoop() {
   for (;;) {
     const uint32_t now = ::millis();
 
-    // Emergency button: debounced, acts on the door directly (no network involved).
+    // Inside exit button: debounced here; the controller asks the backend whether someone is
+    // inside before anything opens (the button never moves the servo by itself).
     if (digitalRead(PIN_EMERGENCY_BTN) == LOW) {
       if (!btnLowSince) btnLowSince = now ? now : 1;
       if (!btnLatched && now - btnLowSince >= kButtonDebounceMs) {
         btnLatched = true;
         buttonPressed_ = true;
-        Lock l(mtx_);
-        door_.emergencyClose(now, CloseReason::LOCAL_BUTTON);
       }
     } else {
       btnLowSince = 0;
@@ -120,7 +160,7 @@ void Esp32Hal::ioLoop() {
       angle = door_.angle();
     }
     if (angle != lastAngle) {
-      servo.write(angle);
+      servo.write(servoAngle(angle));
       lastAngle = angle;
     }
     driveFeedback(now);
@@ -128,7 +168,35 @@ void Esp32Hal::ioLoop() {
   }
 }
 
+void Esp32Hal::alarm(uint32_t ms) {
+  uint32_t until = ::millis() + ms;
+  alarmUntil_ = until ? until : 1;
+  Serial.printf("[alarm] ALARMA DE INTRUSION %lu s\n", (unsigned long)(ms / 1000));
+}
+
+bool Esp32Hal::alarmActive() const {
+  uint32_t until = alarmUntil_;
+  return until != 0 && int32_t(until - ::millis()) > 0;
+}
+
+bool Esp32Hal::entranceLedOn() const {
+  uint32_t until = entranceLedUntil_;
+  return until != 0 && int32_t(until - ::millis()) > 0;
+}
+
 void Esp32Hal::driveFeedback(uint32_t now) {
+  // Main entrance and fan: independent outputs, never affected by the room patterns.
+  digitalWrite(PIN_LED_ENTRANCE, entranceLedOn());
+  digitalWrite(PIN_FAN, fanOn_);
+
+  // Intrusion alarm wins over every other pattern: red LED + buzzer blinking together.
+  if (alarmActive()) {
+    const bool on = (now / 250) % 2;
+    digitalWrite(PIN_LED_GREEN, LOW);
+    digitalWrite(PIN_LED_RED, on);
+    digitalWrite(PIN_BUZZER, on);
+    return;
+  }
   Feedback f = (flash_ != Feedback::NONE && int32_t(flashUntil_ - now) > 0) ? flash_ : mode_;
   bool g = false, r = false, buzz = false;
   const uint32_t ph = now % 2000;
@@ -141,6 +209,19 @@ void Esp32Hal::driveFeedback(uint32_t now) {
     case Feedback::ERROR: r = true; break;
     case Feedback::OFFLINE: r = (now / 500) % 2; break;
     case Feedback::NONE: break;
+  }
+  // Environmental alarm: two short beeps every 2 s (intrusion is a steady 250 ms on/off).
+  if (envAlarm_) buzz = buzz || ph < 100 || (ph >= 250 && ph < 350);
+  // Main entrance QR denied: red LED blinks 3 times + one short beep.
+  const uint32_t deniedAt = entranceDeniedAt_;
+  if (deniedAt != 0) {
+    const uint32_t el = now - deniedAt;
+    if (el < kEntranceDeniedMs) {
+      r = (el % 400) < 200;
+      buzz = buzz || el < kEntranceBeepMs;
+    } else {
+      entranceDeniedAt_ = 0;
+    }
   }
   digitalWrite(PIN_LED_GREEN, g);
   digitalWrite(PIN_LED_RED, r);
@@ -244,6 +325,57 @@ void Esp32Hal::onCardDetected(const std::string& uidHex) {
 
 void Esp32Hal::onSessionPhase(const std::string& backendState) {
   if (lcd_) lcd_->onSessionPhase(backendState);
+}
+
+void Esp32Hal::onGranted(const std::string& greeting, const std::string& name) {
+  if (!name.empty()) Serial.printf("[ui] %s, %s\n", greeting.c_str(), name.c_str());
+  if (lcd_) lcd_->onGranted(greeting, name);
+}
+
+bool Esp32Hal::takeDhtSample(DhtSample& out) {
+  Lock l(mtx_);
+  if (!dhtNew_) return false;
+  out = dhtSample_;
+  dhtNew_ = false;
+  return true;
+}
+
+void Esp32Hal::onEnvironment(const EnvStatus& s) {
+  {
+    Lock l(mtx_);
+    env_ = s;
+  }
+  fanOn_ = s.fan;
+  envAlarm_ = s.alarm;  // the LCD task reads envStatus() itself
+}
+
+EnvStatus Esp32Hal::envStatus() {
+  Lock l(mtx_);
+  return env_;
+}
+
+void Esp32Hal::onEntranceSignal(bool granted, uint32_t ledMs, const std::string& name) {
+  // Only LEDs, buzzer and LCD: the room servo is never touched from here.
+  const uint32_t now = ::millis();
+  if (granted) {
+    const uint32_t until = now + ledMs;
+    entranceLedUntil_ = until ? until : 1;
+    Serial.printf("[entrada] QR OK %s (LED %lu ms)\n", name.c_str(), (unsigned long)ledMs);
+  } else {
+    entranceLedUntil_ = 0;
+    entranceDeniedAt_ = now ? now : 1;
+    Serial.println("[entrada] QR DENEGADO");
+  }
+  if (lcd_) lcd_->onEntrance(granted, name);
+}
+
+void Esp32Hal::cancelEntrance() {
+  const bool wasOn = entranceLedOn() || entranceDeniedAt_ != 0;
+  entranceLedUntil_ = 0;
+  entranceDeniedAt_ = 0;
+  digitalWrite(PIN_LED_ENTRANCE, LOW);  // now, not on the next io tick
+  if (wasOn) Serial.println("[entrada] señal cancelada por cierre de emergencia");
+  if (lcd_) lcd_->cancelEntrance();
 }
 
 void Esp32Hal::log(const std::string& line) {

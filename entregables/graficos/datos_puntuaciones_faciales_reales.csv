@@ -1,0 +1,15 @@
+ts_utc,accion,sentido,similitud,coincidencias,fotogramas,motivo
+2026-11-15 21:18:56,access.face_retry,ENTRADA,0.0,0,5,FACE_NOT_DETECTED
+2026-11-15 21:18:59,access.face_ok,ENTRADA,0.7835,5,5,
+2026-11-15 21:20:53,access.denied,SALIDA,0.2936,0,5,FACE_MISMATCH
+2026-11-15 21:21:12,access.face_retry,ENTRADA,0.0,0,5,FACE_NOT_DETECTED
+2026-11-15 21:21:15,access.face_ok,SALIDA,0.8371,5,5,
+2026-11-15 21:26:13,access.face_retry,ENTRADA,0.0,0,5,FACE_NOT_DETECTED
+2026-11-15 21:26:16,access.face_ok,ENTRADA,0.7222,5,5,
+2026-11-15 21:30:20,access.face_ok,SALIDA,0.7251,5,5,
+2026-11-15 21:32:14,access.face_ok,ENTRADA,0.612,5,5,
+2026-11-15 22:25:25,access.face_retry,ENTRADA,0.0,0,5,FACE_NOT_DETECTED
+2026-11-15 22:25:31,access.face_ok,ENTRADA,0.6525,4,5,
+2026-11-15 22:40:22,access.face_ok,ENTRADA,0.6552,5,5,
+2026-11-15 22:40:57,access.face_retry,ENTRADA,0.0,0,5,FACE_NOT_DETECTED
+2026-11-15 22:41:00,access.face_ok,ENTRADA,0.6935,5,5,

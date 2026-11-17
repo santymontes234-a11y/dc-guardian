@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import DomainError, not_found
 from app.core.security import encrypt_secret, generate_device_secret
-from app.models import AccessSession, Area, AuthorizationRequest, Device
+from app.models import AccessSession, Area, AuthorizationRequest, Device, EntranceEvent, EnvironmentReading
 from app.models.enums import DeviceStatus
 from app.schemas.facility import AreaCreate, AreaUpdate, DeviceCreate, DeviceUpdate
 from app.services.context import ActorCtx, diff_fields
@@ -50,9 +50,11 @@ def delete_area(db: Session, ctx: ActorCtx, area_id: int) -> None:
     used = (
         db.execute(select(Device.id).where(Device.area_id == area.id).limit(1)).first()
         or db.execute(select(AuthorizationRequest.id).where(AuthorizationRequest.area_id == area.id).limit(1)).first()
+        or db.execute(select(EntranceEvent.id).where(EntranceEvent.area_id == area.id).limit(1)).first()
+        or db.execute(select(EnvironmentReading.id).where(EnvironmentReading.area_id == area.id).limit(1)).first()
     )
     if used:
-        raise DomainError("AREA_IN_USE", "El área tiene dispositivos o solicitudes asociadas", 409)
+        raise DomainError("AREA_IN_USE", "El área tiene dispositivos, solicitudes o registros asociados", 409)
     ctx.audit(db, "area.deleted", "area", area.id, {"code": area.code})
     db.delete(area)
     db.commit()

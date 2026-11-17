@@ -21,6 +21,7 @@ from app.db.session import ReadSessionLocal, SessionLocal, engine  # noqa: E402,
 from app.main import app as fastapi_app  # noqa: E402
 from app.models.enums import AdminRole  # noqa: E402
 from app.services.auth import create_admin  # noqa: E402
+from app.services.entrance import scan_limiter  # noqa: E402
 
 ADMIN_PASSWORD = "Correcta-Horse-42"
 
@@ -30,6 +31,7 @@ def _fresh_schema():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     login_limiter.reset()
+    scan_limiter().reset()
     yield
 
 

@@ -17,6 +17,7 @@ from app.models.engineer import ENGINEER_ID_PREFIX
 from app.models.enums import CardStatus, EngineerStatus
 from app.schemas.common import PageParams
 from app.schemas.engineers import EngineerCreate, EngineerUpdate
+from app.services import qr as qr_service
 from app.services import requests as requests_service
 from app.services.context import ActorCtx, diff_fields
 
@@ -200,6 +201,7 @@ def erase(db: Session, ctx: ActorCtx, engineer_pk: int, confirm_engineer_id: str
             ctx.audit(db, "card.unassigned", "card", card.id, {"engineer_id": [eng.id, None], "cause": "erasure"})
             unlinked += 1
 
+    qr_service.revoke_for_engineer(db, ctx, eng.id, "erasure")
     samples = len(eng.face_embeddings)
     eng.face_embeddings.clear()  # delete-orphan → rows deleted
     db.flush()

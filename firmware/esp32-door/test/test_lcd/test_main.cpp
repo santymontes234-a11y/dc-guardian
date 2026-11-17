@@ -45,14 +45,26 @@ void test_idle_waits_for_card_and_shows_distance() {
   TEST_ASSERT_TRUE(lineIs(v, 3, "Dist: --- cm"));
 }
 
+void test_alarm_screen_wins() {
+  LcdView v;
+  LcdInput in = online(SystemState::PRESENCE, 9.0f);
+  in.alarm = true;
+  v.update(in, 1000);
+  TEST_ASSERT_EQUAL(LcdScreen::ALARM, v.screen());
+  TEST_ASSERT_TRUE(lineIs(v, 1, "Intruso detectado"));
+  in.alarm = false;
+  in.thresholdCm = 15;
+  v.update(online(SystemState::IDLE, 40.0f), 2000);
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Alarma si < 50 cm"));
+}
+
 void test_presence_screen_shows_distance_and_threshold() {
   LcdView v;
   LcdInput in = online(SystemState::PRESENCE, 34.5f);
   in.thresholdCm = 60;
   v.update(in, 1000);
   TEST_ASSERT_EQUAL(LcdScreen::PRESENCE, v.screen());
-  TEST_ASSERT_TRUE(lineIs(v, 0, "PRESENCIA DETECTADA"));
-  TEST_ASSERT_TRUE(lineIs(v, 2, "Umbral: 60 cm"));
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Sala: persona dentro"));
   TEST_ASSERT_TRUE(lineIs(v, 3, "Dist: 34.5 cm"));
 }
 
@@ -93,6 +105,26 @@ void test_card_read_then_verifying_then_face() {
   TEST_ASSERT_TRUE(lineIs(v, 2, "Mire a la camara"));
 }
 
+void test_granted_shows_welcome_and_name() {
+  LcdView v;
+  v.onCard("03312B14");
+  v.onGranted("Bienvenido", "Santiago Martin Montes Rubio");
+  v.onFeedback(Feedback::GRANTED, "", 1000);
+  LcdInput in = online(SystemState::DOOR_OPEN, 30);
+  in.door = DoorState::OPENING;
+  v.update(in, 1000);
+  TEST_ASSERT_TRUE(lineIs(v, 0, "ACCESO AUTORIZADO"));
+  TEST_ASSERT_TRUE(lineIs(v, 1, "Bienvenido"));
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Santiago Martin"));  // wrapped at a space
+  TEST_ASSERT_TRUE(lineIs(v, 3, "Montes Rubio"));
+  // Without a name the classic screen stays
+  LcdView w;
+  w.onFeedback(Feedback::GRANTED, "", 1000);
+  w.update(in, 1000);
+  TEST_ASSERT_TRUE(lineIs(w, 1, "Bienvenido"));
+  TEST_ASSERT_TRUE(lineIs(w, 2, "Abriendo puerta..."));
+}
+
 void test_granted_open_closing_closed_cycle() {
   LcdView v;
   v.onFeedback(Feedback::GRANTED, "", 1000);
@@ -103,7 +135,7 @@ void test_granted_open_closing_closed_cycle() {
   TEST_ASSERT_TRUE(lineIs(v, 0, "ACCESO AUTORIZADO"));
 
   in.door = DoorState::OPEN;
-  v.update(in, 2600);  // grantedMs (1500) elapsed
+  v.update(in, 4100);  // grantedMs (3000) elapsed
   TEST_ASSERT_EQUAL(LcdScreen::DOOR_OPEN, v.screen());
   TEST_ASSERT_TRUE(lineIs(v, 0, "PUERTA ABIERTA"));
 
@@ -213,6 +245,98 @@ void test_every_screen_is_twenty_ascii_chars_per_line() {
   assertWellFormed(v);
 }
 
+// ------------------------------------------------------------------ DHT11 / main entrance
+static EnvStatus envOk(float t, float h) {
+  EnvStatus e;
+  e.sensor = DhtStatus::OK;
+  e.temperatureC = t;
+  e.humidityPct = h;
+  return e;
+}
+
+void test_resting_screen_shows_temperature_and_humidity() {
+  LcdView v;
+  LcdInput in = online(SystemState::IDLE, 120.0f);
+  in.env = envOk(24.46f, 51.4f);
+  v.update(in, 1000);
+  TEST_ASSERT_EQUAL(LcdScreen::WAIT_CARD, v.screen());
+  TEST_ASSERT_TRUE(lineIs(v, 2, "TEMP 24.5C HUM 51%"));
+  in.env.sensor = DhtStatus::ERROR;
+  v.update(in, 1100);
+  TEST_ASSERT_TRUE(lineIs(v, 2, "TEMP/HUM: ERROR DHT"));
+  assertWellFormed(v);
+}
+
+void test_env_alarm_screen() {
+  LcdView v;
+  LcdInput in = online(SystemState::IDLE, 120.0f);
+  in.env = envOk(33.0f, 50.0f);
+  in.env.alarm = true;
+  in.env.fan = true;
+  v.update(in, 1000);
+  TEST_ASSERT_EQUAL(LcdScreen::ENV_ALARM, v.screen());
+  TEST_ASSERT_TRUE(lineIs(v, 0, "ALARMA AMBIENTAL"));
+  TEST_ASSERT_TRUE(lineIs(v, 1, "TEMP 33.0C HUM 50%"));
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Temperatura critica"));
+  TEST_ASSERT_TRUE(lineIs(v, 3, "Ventilador: ON"));
+  in.env = envOk(24.0f, 90.0f);
+  in.env.alarm = true;
+  v.update(in, 1100);
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Humedad fuera rango"));
+  // An access attempt and the intrusion alarm take precedence
+  v.update(online(SystemState::CARD_READ, 30), 1200);
+  TEST_ASSERT_EQUAL(LcdScreen::RFID_READ, v.screen());
+  in.alarm = true;
+  v.update(in, 1300);
+  TEST_ASSERT_EQUAL(LcdScreen::ALARM, v.screen());
+}
+
+void test_entrance_granted_and_denied_for_3_s() {
+  LcdView v;
+  LcdInput in = online(SystemState::IDLE, 120.0f);
+  v.onEntrance(true, "Santiago Martin Montes Rubio", 1000);
+  v.update(in, 1000);
+  TEST_ASSERT_EQUAL(LcdScreen::ENTRANCE_GRANTED, v.screen());
+  TEST_ASSERT_TRUE(lineIs(v, 0, "ENTRADA PRINCIPAL"));
+  TEST_ASSERT_TRUE(lineIs(v, 1, "ACCESO QR OK"));
+  TEST_ASSERT_TRUE(lineIs(v, 2, "Santiago Martin"));
+  TEST_ASSERT_TRUE(lineIs(v, 3, "Montes Rubio"));
+  v.update(in, 3900);
+  TEST_ASSERT_EQUAL(LcdScreen::ENTRANCE_GRANTED, v.screen());
+  v.update(in, 4000);  // 3 s elapsed
+  TEST_ASSERT_EQUAL(LcdScreen::WAIT_CARD, v.screen());
+
+  v.onEntrance(false, "", 5000);
+  v.update(in, 5000);
+  TEST_ASSERT_EQUAL(LcdScreen::ENTRANCE_DENIED, v.screen());
+  TEST_ASSERT_TRUE(lineIs(v, 0, "ENTRADA PRINCIPAL"));
+  TEST_ASSERT_TRUE(lineIs(v, 1, "QR DENEGADO"));
+  v.update(in, 8000);
+  TEST_ASSERT_EQUAL(LcdScreen::WAIT_CARD, v.screen());
+}
+
+void test_entrance_name_sanitized_and_room_session_wins() {
+  LcdView v;
+  v.onEntrance(true, std::string("\x1b[2J\xc3\xa9vil\n") + std::string(50, 'Z'), 1000);
+  v.update(online(SystemState::IDLE), 1000);
+  assertWellFormed(v);
+  TEST_ASSERT_TRUE(lineIs(v, 2, "[2JvilZZZZZZZZZZZZZZ"));
+  // The room door mid-cycle keeps its own screen
+  v.onEntrance(true, "Ana", 2000);
+  v.update(online(SystemState::WAITING_DECISION, 30), 2000);
+  TEST_ASSERT_EQUAL(LcdScreen::VERIFYING, v.screen());
+}
+
+void test_entrance_cancelled_by_emergency() {
+  LcdView v;
+  v.onEntrance(true, "Ana", 1000);
+  v.update(online(SystemState::IDLE), 1000);
+  TEST_ASSERT_EQUAL(LcdScreen::ENTRANCE_GRANTED, v.screen());
+  v.cancelEntrance();
+  v.update(online(SystemState::IDLE), 1100);
+  TEST_ASSERT_EQUAL(LcdScreen::WAIT_CARD, v.screen());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_idle_waits_for_card_and_shows_distance);
@@ -229,5 +353,12 @@ int main() {
   RUN_TEST(test_sensor_error_screen);
   RUN_TEST(test_config_error_wins);
   RUN_TEST(test_every_screen_is_twenty_ascii_chars_per_line);
+  RUN_TEST(test_granted_shows_welcome_and_name);
+  RUN_TEST(test_alarm_screen_wins);
+  RUN_TEST(test_resting_screen_shows_temperature_and_humidity);
+  RUN_TEST(test_env_alarm_screen);
+  RUN_TEST(test_entrance_granted_and_denied_for_3_s);
+  RUN_TEST(test_entrance_name_sanitized_and_room_session_wins);
+  RUN_TEST(test_entrance_cancelled_by_emergency);
   return UNITY_END();
 }

@@ -43,9 +43,16 @@ flowchart TB
 - **Registro 1** (`engineers`, `face_embeddings`): identidad y biometría. **Nunca concede acceso.**
 - **Registro 2** (`authorization_requests`): solicitudes aprobadas con ventana horaria. Es lo
   **único** que consulta el motor de acceso.
-- **Fail-closed**: cualquier error, timeout, firma inválida, pérdida de red o de presencia deja
-  la puerta cerrada. El ESP32 no decide nunca: solo abre ante un `GRANTED` firmado para la
-  sesión que él inició.
+- **Fail-closed**: cualquier error, timeout, firma inválida o pérdida de red deja la puerta
+  cerrada. El ESP32 no decide nunca: solo abre ante un `GRANTED` firmado para la sesión que él
+  inició. El HC-SR04 está **dentro** de la sala y solo sirve de alarma de intrusión: no es un
+  factor de acceso (protocolo §9).
+- **Entrada principal (QR)**: el kiosco lee el QR del ingeniero y el backend comprueba la
+  credencial y el Registro 2. El ESP32 solo recibe una señal firmada y enciende un LED verde
+  (GPIO 14); nunca mueve el servo de la sala (protocolo §10).
+- **DHT11**: temperatura y humedad de la sala cada 10 s. El backend decide ventilador y alarma;
+  sin backend o con firma inválida, el ESP32 decide en local con los mismos umbrales
+  (protocolo §11).
 
 ## 3. Flujo de acceso (entrada)
 

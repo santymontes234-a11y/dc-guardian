@@ -76,10 +76,17 @@ ApiResult BackendClient::heartbeat(const HeartbeatInfo& hb, const DeviceConfig& 
   return ApiResult::OK;
 }
 
-ApiResult BackendClient::presence(bool present, float distanceCm, float thresholdCm) {
+ApiResult BackendClient::presence(bool present, float distanceCm, float thresholdCm,
+                                  PresenceReply& out) {
   std::string resp;
-  return call("POST", "/device/presence", {}, buildPresenceBody(present, distanceCm, thresholdCm),
-              resp);
+  ApiResult r = call("POST", "/device/presence", {}, buildPresenceBody(present, distanceCm, thresholdCm),
+                     resp);
+  if (r != ApiResult::OK) return r;
+  if (!parsePresenceReply(resp, out)) {
+    lastError_ = "bad presence payload";
+    return ApiResult::BAD_PAYLOAD;
+  }
+  return ApiResult::OK;
 }
 
 ApiResult BackendClient::startAccess(const std::string& uid, float distanceCm,
@@ -123,6 +130,46 @@ ApiResult BackendClient::confirmClosed(const std::string& sessionId, const char*
   if (!isValidSessionId(sessionId)) return ApiResult::BAD_PAYLOAD;
   std::string resp;
   return call("POST", "/device/access/" + sessionId + "/closed", {}, buildClosedBody(reason), resp);
+}
+
+ApiResult BackendClient::exitButton(StartReply& out) {
+  std::string resp;
+  ApiResult r = call("POST", "/device/exit-button", {}, buildExitButtonBody(), resp);
+  if (r != ApiResult::OK) return r;
+  if (!parseStartReply(resp, out)) {  // also rejects a GRANTED here: decisions come by poll
+    lastError_ = "bad exit-button payload";
+    return ApiResult::BAD_PAYLOAD;
+  }
+  return ApiResult::OK;
+}
+
+ApiResult BackendClient::environment(const EnvReading& reading, EnvReply& out) {
+  std::string resp;
+  ApiResult r = call("POST", "/device/environment", {}, buildEnvironmentBody(reading), resp);
+  if (r != ApiResult::OK) return r;
+  if (!parseEnvReply(resp, out)) {
+    lastError_ = "bad environment payload";
+    return ApiResult::BAD_PAYLOAD;
+  }
+  return ApiResult::OK;
+}
+
+ApiResult BackendClient::entrancePoll(EntrancePollReply& out) {
+  std::string resp;
+  ApiResult r = call("POST", "/device/entrance/poll", {}, buildEntrancePollBody(), resp);
+  if (r != ApiResult::OK) return r;
+  if (!parseEntrancePollReply(resp, out)) {
+    lastError_ = "bad entrance payload";
+    return ApiResult::BAD_PAYLOAD;
+  }
+  return ApiResult::OK;
+}
+
+ApiResult BackendClient::entranceAck(const std::string& signalId) {
+  // Never put an unvalidated string into the URL path.
+  if (!isValidSignalId(signalId)) return ApiResult::BAD_PAYLOAD;
+  std::string resp;
+  return call("POST", "/device/entrance/" + signalId + "/ack", {}, buildEntranceAckBody(), resp);
 }
 
 ApiResult BackendClient::event(const char* type, const std::string& detail) {

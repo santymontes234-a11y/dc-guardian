@@ -1,9 +1,14 @@
 import { ready } from "/js/layout.js";
-import { api, escapeHtml, fmtDate, guarded } from "/js/api.js";
+import { api, ApiError, escapeHtml, fmtDate, guarded } from "/js/api.js";
 import { connectEvents } from "/js/ws.js";
-import { $, ALERT_HEAD, SESSION_HEAD, alertRow, badge, emptyRow, sessionRow } from "/js/ui.js";
+import { $, ALERT_HEAD, SESSION_HEAD, alertRow, badge, emptyRow, methodText, reasonText, sessionRow, zoneText } from "/js/ui.js";
+import { startClock } from "/js/brand.js";
+import { LOG_COLS, LOG_HEAD, fetchAccessLog, logRow } from "/js/access-log.js";
+import { lineChart } from "/js/env-chart.js";
 
 await ready;
+startClock($("today"));
+$("log-head").innerHTML = LOG_HEAD;
 
 $("sess-head").innerHTML = SESSION_HEAD;
 $("deny-head").innerHTML = SESSION_HEAD;
@@ -25,6 +30,9 @@ const EVENT_TEXT = {
   "device.status": "Estado de dispositivo",
   "device.presence": "Presencia",
   "request.updated": "Solicitud actualizada",
+  "entrance.scan": "Entrada principal (QR)",
+  "access.qr": "Entrada principal (QR)",
+  "qr.scan": "Entrada principal (QR)",
 };
 
 function kpi(label, value, tone = "") {
@@ -45,6 +53,7 @@ function renderDevices(devices) {
           <span>(umbral ${d.presence_threshold_cm} cm)</span></div>
         <div><span>RC522</span><br>${badge(sensors.rfid ?? "—")}</div>
         <div><span>HC-SR04</span><br>${badge(sensors.ultrasonic ?? "—", sensors.ultrasonic && sensors.ultrasonic !== "OK" ? "danger" : undefined)}</div>
+        <div><span>DHT11</span><br>${badge(sensors.dht ?? "—", sensors.dht && sensors.dht !== "OK" ? "danger" : undefined)}</div>
         <div><span>Firmware · RSSI</span><br><b>${escapeHtml(d.firmware_version ?? "—")} · ${hw.rssi ?? "—"} dBm</b></div>
       </div></div>`;
   }).join("") : '<p class="empty">No hay dispositivos registrados.</p>';
@@ -79,6 +88,99 @@ async function load() {
   $("denials").innerHTML = d.recent_denials.map(sessionRow).join("") || emptyRow(7, "Sin denegaciones");
   const open = d.alerts.latest.filter((a) => !a.acknowledged_at);
   $("alerts").innerHTML = open.map((a) => alertRow(a)).join("") || emptyRow(5, "Sin alertas abiertas");
+  loadLog();
+}
+
+async function loadLog() {
+  const page = await guarded(() => fetchAccessLog({ limit: 10 }));
+  if (!page) return;
+  $("log-rows").innerHTML = page.items.map(logRow).join("") || emptyRow(LOG_COLS, "Sin registros todavía");
+}
+
+// ------------------------------------------------------------------ DHT11 (sala de servidores)
+const ENV_MINUTES = 60;
+const STALE_MS = 35_000; // el firmware envía cada 10 s
+const DEFAULT_TH = { temp_high_c: 27, temp_critical_c: 32, humidity_low_pct: 20, humidity_high_pct: 80 };
+let env = null;
+let series = [];
+
+const num = (v) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+const thresholds = () => ({ ...DEFAULT_TH, ...(env?.thresholds ?? {}) });
+
+function setMetric(id, text, tone = "") {
+  $(id).textContent = text;
+  $(id).className = `value${$(id).classList.contains("small") ? " small" : ""}${tone ? ` ${tone}` : ""}`;
+}
+
+function renderEnv() {
+  const th = thresholds();
+  if (!env?.at) {
+    $("env-fresh").className = "badge badge-muted";
+    $("env-fresh").textContent = "Sin lecturas";
+  } else {
+    const t = num(env.temperature_c);
+    const h = num(env.humidity_pct);
+    const sensorOk = env.sensor === "OK";
+    const at = env.at ? Date.parse(env.at) : NaN;
+    const stale = !Number.isFinite(at) || Date.now() - at > STALE_MS;
+    $("env-fresh").className = `badge badge-${stale ? "warn" : "ok"}`;
+    $("env-fresh").textContent = stale ? "Sin lecturas recientes" : "En vivo";
+    const tTone = t === null ? "" : t >= th.temp_critical_c ? "danger" : t >= th.temp_high_c ? "warn" : "ok";
+    setMetric("env-temp", t === null ? "—" : `${t.toFixed(1)} °C`, tTone);
+    $("env-temp-hint").textContent = t === null ? "" : t >= th.temp_critical_c ? "Crítica"
+      : t >= th.temp_high_c ? "Alta: se enciende el ventilador" : "Normal";
+    const hOut = h !== null && (h < th.humidity_low_pct || h > th.humidity_high_pct);
+    setMetric("env-hum", h === null ? "—" : `${h.toFixed(1)} %`, h === null ? "" : hOut ? "warn" : "ok");
+    $("env-hum-hint").textContent = h === null ? "" : hOut ? "Fuera de rango" : `Rango ${th.humidity_low_pct}–${th.humidity_high_pct} %`;
+    const fan = Boolean(env.fan);
+    $("env-fan").textContent = fan ? "Encendido" : "Apagado";
+    $("env-fan-icon").classList.toggle("on", fan);
+    const alarm = Boolean(env.alarm);
+    setMetric("env-alarm", alarm ? "ACTIVA" : "Normal", alarm ? "danger" : "ok");
+    setMetric("env-sensor", sensorOk ? "DHT11 OK" : "DHT11 con fallo", sensorOk ? "ok" : "danger");
+    $("env-at").textContent = env.at ? `${devicePrefix(env.device_code)}${fmtDate(env.at)}` : "";
+  }
+  const pts = (key) => series.map((p) => ({ t: p.t, v: p[key] }));
+  lineChart($("chart-temp"), { points: pts("temp"), minutes: ENV_MINUTES, unit: " °C", domain: [15, 35], label: "Temperatura",
+    thresholds: [{ value: th.temp_high_c, label: "Alta", tone: "warn" }, { value: th.temp_critical_c, label: "Crítica", tone: "danger" }] });
+  lineChart($("chart-hum"), { points: pts("hum"), minutes: ENV_MINUTES, unit: " %", domain: [0, 100], label: "Humedad",
+    thresholds: [{ value: th.humidity_low_pct, label: "Mín.", tone: "warn" }, { value: th.humidity_high_pct, label: "Máx.", tone: "warn" }] });
+}
+
+const devicePrefix = (code) => (code ? `${code} · ` : "");
+
+function pushPoint(r) {
+  const t = Date.parse(r.at);
+  if (!Number.isFinite(t)) return;
+  const ok = r.sensor === undefined || r.sensor === "OK";
+  series.push({ t, temp: ok ? num(r.temperature_c) : null, hum: ok ? num(r.humidity_pct) : null });
+  series.sort((a, b) => a.t - b.t);
+  const cut = Date.now() - ENV_MINUTES * 60_000;
+  series = series.filter((p) => p.t >= cut);
+}
+
+async function loadEnv() {
+  try {
+    env = await api.get("/monitoring/environment/latest");
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 404) console.warn("DHT11:", err.message);
+  }
+  try {
+    const h = await api.get("/monitoring/environment", { minutes: ENV_MINUTES });
+    series = [];
+    for (const r of h.items ?? []) pushPoint(r);
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.status !== 404) console.warn("DHT11 historial:", err.message);
+  }
+  renderEnv();
+}
+
+function onEnvironment(evt) {
+  const data = evt.data ?? {};
+  const at = data.at ?? evt.ts;
+  env = { ...(env ?? {}), ...data, at, thresholds: data.thresholds ?? env?.thresholds };
+  pushPoint({ ...data, at });
+  renderEnv();
 }
 
 let count = 0;
@@ -89,7 +191,13 @@ function addFeed(evt) {
   $("evt-count").textContent = `${count} eventos`;
   const data = evt.data ?? {};
   let text = "";
-  if (evt.type.startsWith("access.")) {
+  if (data.method === "QR" || data.area === "ENTRADA_PRINCIPAL" || data.zone === "ENTRADA_PRINCIPAL"
+      || data.zone?.code === "ENTRADA_PRINCIPAL") {
+    const who = data.display_name ?? data.person ?? data.engineer?.full_name ?? "Credencial QR";
+    const res = data.result?.value ?? data.result;
+    text = `${who} · ${zoneText("ENTRADA_PRINCIPAL")} · ${methodText("QR")} · ${res === "GRANTED" ? "permitido" : "denegado"}`
+      + `${data.reason_code ? ` · ${reasonText(data.reason_code)}` : ""}`;
+  } else if (evt.type.startsWith("access.")) {
     const who = data.engineer ? `${data.engineer.full_name} (${data.engineer.engineer_id})` : `tarjeta ${data.card_uid ?? "?"}`;
     text = `${who} · ${data.device_code ?? ""}${data.reason ? ` · ${data.reason}` : ""}`;
   } else if (evt.type.startsWith("alert.")) {
@@ -101,8 +209,9 @@ function addFeed(evt) {
   } else {
     text = JSON.stringify(data).slice(0, 120);
   }
-  const tone = evt.type === "access.denied" || data.severity === "CRITICAL" ? "danger"
-    : evt.type === "access.granted" ? "ok" : undefined;
+  const qrResult = data.result?.value ?? data.result;
+  const tone = evt.type === "access.denied" || data.severity === "CRITICAL" || qrResult === "DENIED" ? "danger"
+    : evt.type === "access.granted" || qrResult === "GRANTED" ? "ok" : undefined;
   const li = document.createElement("li");
   li.className = "new";
   li.innerHTML = `<time>${new Date(evt.ts).toLocaleTimeString("es")}</time>
@@ -122,11 +231,15 @@ events.on("status", (s) => {
   $("live").className = `badge badge-${s === "open" ? "ok" : "danger"}`;
   $("live").textContent = s === "open" ? "En vivo" : "Sin conexión en tiempo real";
 });
+events.on("environment", onEnvironment);
 events.on("*", (evt) => {
   if (!evt?.type || evt.type === "hello") return; // "status" llega como texto, no como evento
+  if (evt.type === "environment") return; // cada 10 s: tarjeta propia, no inunda el registro
   addFeed(evt);
   scheduleReload();
 });
 
-await load();
+await Promise.all([load(), loadEnv()]);
 setInterval(load, 30000); // por si se pierde algún evento
+setInterval(loadEnv, 60000);
+setInterval(renderEnv, 10000); // marca "sin lecturas recientes" y desplaza la gráfica

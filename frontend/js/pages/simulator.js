@@ -8,6 +8,8 @@ let code = null;
 let dev = null;
 let pollTimer = null;
 let closeTimer = null;
+let entranceTimer = null;
+let entranceAuto = null;
 
 function log(text, tone = "", detail = null) {
   const li = document.createElement("li");
@@ -38,7 +40,60 @@ function renderDevice(d) {
   $("hw-status").textContent = d.online ? "" : "Desconectado: no envía latidos";
   const awaiting = Boolean(d.session_id) && !open;
   document.querySelectorAll("[data-face]").forEach((b) => { b.disabled = !awaiting; });
+  renderEnvironment(d);
+  if ("entrance_led" in d) {
+    // Solo se reacciona a cambios del estado del ESP32 virtual; el apagado lo marca el temporizador
+    // local (led_ms) para no volver a encender un LED ya vencido en el siguiente refresco.
+    const led = d.entrance_led && d.entrance_led !== "OFF" ? d.entrance_led : null;
+    const until = parseUntil(d.entrance_led_until ?? d.entrance_led_expires_at);
+    if (led !== serverLed) {
+      serverLed = led;
+      if (!led || (until !== null && until <= Date.now())) applyEntrance(null);
+      else applyEntrance(led, until ?? Date.now() + (led === "GREEN" ? 5000 : 3000));
+    }
+  }
 }
+
+// ------------------------------------------------------------------ entrada principal (LED)
+let serverLed = null;
+
+function parseUntil(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return v > 1e12 ? v : v > 1e9 ? v * 1000 : null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+function applyEntrance(led, until = null) {
+  clearTimeout(entranceTimer);
+  const green = led === "GREEN";
+  const red = led === "RED_BLINK";
+  $("sim-led-green").classList.toggle("on", green);
+  $("sim-led-green-state").textContent = green ? "Encendido · puerta abierta" : "Apagado";
+  $("sim-led-red").classList.toggle("blink-loop", red);
+  $("sim-led-red-state").textContent = red ? "Parpadeando · denegado" : "Apagado";
+  if (led && until) entranceTimer = setTimeout(() => applyEntrance(null), Math.max(0, until - Date.now()));
+}
+
+// ------------------------------------------------------------------ DHT11
+function renderEnvironment(d) {
+  if ("fan" in d) {
+    $("sim-fan-icon").classList.toggle("on", Boolean(d.fan));
+    $("sim-fan-state").textContent = d.fan ? "Encendido" : "Apagado";
+  }
+  if ("env_alarm" in d) {
+    $("sim-env-alarm").classList.toggle("blink-loop", Boolean(d.env_alarm));
+    $("sim-env-alarm-state").textContent = d.env_alarm ? "ACTIVA" : "Inactiva";
+  }
+  const e = d.last_env;
+  if (e) {
+    $("sim-last-env").textContent = e.sensor === "ERROR" || e.sensor_ok === false
+      ? "Última lectura: sensor con fallo (ERROR)"
+      : `Última lectura enviada: ${fmtNum(e.temperature_c)} °C · ${fmtNum(e.humidity_pct)} %`;
+  }
+}
+
+const fmtNum = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(1));
 
 function describe(reply) {
   if (!reply) return null;
@@ -101,6 +156,7 @@ async function loadState() {
   renderDevice(d);
   if (!code) toast("No hay dispositivos: crea uno o ejecuta la semilla", "error");
   $("kiosk-link").href = `/pages/kiosk.html?device=${encodeURIComponent(code ?? "")}`;
+  $("entrance-link").href = `/pages/entrance.html?device=${encodeURIComponent(code ?? "")}`;
 }
 
 $("device").addEventListener("change", (e) => { code = e.target.value; stopPolling(); loadState(); });
@@ -111,17 +167,21 @@ $("distance").addEventListener("input", (e) => {
   clearTimeout(distTimer);
   distTimer = setTimeout(async () => {
     const out = await act("/distance", { distance_cm: Number(e.target.value) });
-    if (out?.reply?.data) log(`Presencia ${out.device.present ? "detectada" : "perdida"} a ${e.target.value} cm`, "", describe(out.reply));
+    if (out?.reply?.data?.alarm) log(`ALARMA DE INTRUSIÓN: persona dentro de la sala sin nadie autorizado (${out.reply.data.alarm_s} s de zumbador y LED rojo)`, "danger", describe(out.reply));
+    else if (out?.reply?.data) log(`Sensor interior: ${out.device.present ? "persona en la sala" : "sala vacía"} (${e.target.value} cm)`, "", describe(out.reply));
   }, 250);
 });
-$("approach").addEventListener("click", async () => {
-  const out = await act("/distance", { distance_cm: 30 });
-  if (out) log("La persona se acerca a 30 cm: presencia detectada", "", describe(out.reply));
-});
-$("leave").addEventListener("click", async () => {
-  const out = await act("/distance", { distance_cm: 200 });
-  if (out) log("La persona se aleja a 200 cm", "", describe(out.reply));
-});
+async function moveInside(cm) {
+  const out = await act("/distance", { distance_cm: cm });
+  if (!out) return;
+  if (out.reply?.data?.alarm) {
+    log(`ALARMA DE INTRUSIÓN: persona en la sala y nadie autorizado dentro (${out.reply.data.alarm_s} s de zumbador y LED rojo)`, "danger", describe(out.reply));
+  } else {
+    log(`Sensor interior: ${out.device.present ? "persona en la sala (sin alarma: hay alguien autorizado dentro o la puerta está en uso)" : "sala vacía"} a ${cm} cm`, "", describe(out.reply));
+  }
+}
+$("approach").addEventListener("click", () => moveInside(10));
+$("leave").addEventListener("click", () => moveInside(200));
 $("online").addEventListener("change", async (e) => {
   const out = await act("/online", { online: e.target.checked });
   if (out) log(e.target.checked ? "ESP32 reconectado (latido enviado)" : "ESP32 desconectado: el backend lo marcará OFFLINE tras 45 s sin latido",
@@ -174,6 +234,77 @@ $("enroll-demo").addEventListener("click", async () => {
   const out = await guarded(() => api.post("/sim/enroll-demo-faces"));
   if (out) toast(`Rostros sintéticos registrados: ${out.enrolled.filter((x) => typeof x === "number").length}`, "ok");
 });
+// ------------------------------------------------------------------ entrada principal (QR)
+async function entrancePoll({ quiet = false } = {}) {
+  if (!code) return;
+  const out = await act("/entrance-poll");
+  if (!out) { stopEntranceAuto(); return; }
+  const r = out.reply;
+  if (r?.error) { log(`Entrada principal: ${r.error}`, "danger"); stopEntranceAuto(); return; }
+  const sig = r?.data?.signal;
+  if (!sig) {
+    if (!quiet) log("Entrada principal: sin señal pendiente (LED apagado)", "", describe(r));
+    return;
+  }
+  const name = sig.display_name ? ` · ${sig.display_name}` : "";
+  if (sig.result === "GRANTED") {
+    const ms = Number(sig.led_ms) || 5000;
+    applyEntrance("GREEN", Date.now() + ms);
+    log(`Entrada principal: señal GRANTED firmada → LED verde ${ms} ms${name}`, "ok", describe(r));
+  } else if (sig.result === "DENIED") {
+    applyEntrance("RED_BLINK", Date.now() + 3000);
+    log(`Entrada principal: señal DENIED → LED rojo parpadea 3 veces y pitido${name}`, "danger", describe(r));
+  } else {
+    log(`Entrada principal: señal con resultado desconocido ignorada (fail-closed)`, "danger", describe(r));
+  }
+}
+
+function stopEntranceAuto() {
+  clearInterval(entranceAuto);
+  entranceAuto = null;
+  $("entrance-auto").checked = false;
+}
+
+$("entrance-poll").addEventListener("click", () => entrancePoll());
+$("entrance-auto").addEventListener("change", (e) => {
+  clearInterval(entranceAuto);
+  entranceAuto = e.target.checked ? setInterval(() => entrancePoll({ quiet: true }), 1000) : null;
+});
+
+// ------------------------------------------------------------------ DHT11
+function syncEnvLabels() {
+  const fail = $("dht-fail").checked;
+  $("temp-label").textContent = fail ? "sin lectura" : `${Number($("temp").value).toFixed(1)} °C`;
+  $("hum-label").textContent = fail ? "sin lectura" : `${$("hum").value} %`;
+  $("temp").disabled = fail;
+  $("hum").disabled = fail;
+}
+["temp", "hum", "dht-fail"].forEach((id) => $(id).addEventListener("input", syncEnvLabels));
+$("dht-fail").addEventListener("change", syncEnvLabels);
+
+async function sendEnvironment() {
+  const fail = $("dht-fail").checked;
+  const body = fail
+    ? { temperature_c: null, humidity_pct: null, sensor: "ERROR" }
+    : { temperature_c: Math.round(Number($("temp").value) * 10) / 10,
+        humidity_pct: Math.round(Number($("hum").value) * 10) / 10, sensor: "OK" };
+  const out = await act("/environment", body);
+  if (!out) return;
+  const r = out.reply;
+  if (r?.error) { log(`DHT11: ${r.error}`, "danger"); return; }
+  const d = r?.data ?? {};
+  if (d.error) { log(`DHT11: ${describe(r)}`, "danger"); return; }
+  const what = fail ? "sensor con fallo (ERROR)" : `${body.temperature_c} °C · ${body.humidity_pct} %`;
+  log(`DHT11: lectura ${what} → ventilador ${d.fan ? "ENCENDIDO" : "apagado"}, alarma ${d.alarm ? "ACTIVA" : "inactiva"}`,
+    d.alarm ? "danger" : d.fan ? "" : "ok", describe(r));
+  // Refleja la respuesta firmada aunque el estado del simulador aún no la incluya.
+  renderEnvironment({ fan: Boolean(d.fan), env_alarm: Boolean(d.alarm), ...(out.device ?? {}) });
+}
+$("env-send").addEventListener("click", sendEnvironment);
+$("env-hot").addEventListener("click", () => { $("dht-fail").checked = false; $("temp").value = 30; syncEnvLabels(); sendEnvironment(); });
+$("env-critical").addEventListener("click", () => { $("dht-fail").checked = false; $("temp").value = 35; syncEnvLabels(); sendEnvironment(); });
+syncEnvLabels();
+
 $("clear").addEventListener("click", () => { $("log").innerHTML = ""; });
 
 await loadState();

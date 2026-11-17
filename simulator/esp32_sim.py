@@ -6,6 +6,10 @@ Standard library only, so it runs anywhere:
     python simulator/esp32_sim.py --url http://localhost:8000 --device DC-DOOR-01 \\
         --secret <hex64> access --uid 04A1B2C3 --distance 30
 
+    python simulator/esp32_sim.py --secret <hex64> env --temp 28.5 --hum 45 --repeat 6
+    python simulator/esp32_sim.py --secret <hex64> env --error
+    python simulator/esp32_sim.py --secret <hex64> entrance --seconds 60
+
     (the secret may also come from DCG_DEVICE_SECRET)
 
 The same class drives the E2E tests (``backend/tests/e2e``) through a pluggable transport, and
@@ -21,6 +25,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -32,6 +37,24 @@ from urllib.parse import parse_qsl, urlencode
 
 PREFIX = "/api/v1"
 PENDING = {"CARD_READ", "AWAITING_FACE", "FACE_OK"}
+
+# Main entrance (QR) and DHT11 — docs/contrato-qr-dht11.md, protocolo-esp32.md §10/§11.
+SIGNAL_ID = re.compile(r"[0-9a-f]{32}")
+ENTRANCE_LED_MS = (1000, 10000)
+ENTRANCE_DENIED_S = 3.0  # red blink + LCD "QR DENEGADO" (the LCD message lasts 3 s)
+FAN_HYSTERESIS_C = 1.0
+ENV_DEFAULTS = {"temp_high_c": 27.0, "temp_critical_c": 32.0, "humidity_low_pct": 20.0, "humidity_high_pct": 80.0}
+
+
+def lcd_text(value: Any, max_len: int) -> str:
+    """Untrusted text for the HD44780: printable ASCII only, truncated (firmware sanitizeLcdText)."""
+    if not isinstance(value, str):
+        return ""
+    return "".join(c for c in value if 0x20 <= ord(c) < 0x7F)[:max_len]
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else None
 
 
 # ------------------------------------------------------------------ signing (mirrors app.core.security)
@@ -121,8 +144,23 @@ class Esp32Sim:
         self.door_open_ms: int = 5000
         self.heartbeat_s: int = 15
         self.door = "CLOSED"
-        self.sensors = {"rfid": "OK", "ultrasonic": "OK"}
+        self.sensors = {"rfid": "OK", "ultrasonic": "OK", "dht": "OK"}
         self.session_id: str | None = None
+        self.button_session = False  # current session was started by the inside exit button
+        self.lcd: tuple[str, str] | None = None  # (greeting, name) of the last GRANTED
+        self.alarm_s = 0  # last intrusion alarm requested by the backend (seconds)
+        # DHT11 / fan / environmental alarm (§11)
+        self.env_thresholds: dict[str, float] = dict(ENV_DEFAULTS)
+        self.fan = False
+        self.env_alarm = False
+        self.env_local = True  # True: fan/alarm decided locally (no valid signed reply)
+        self.last_env: dict[str, Any] | None = None  # last reading sent {temperature_c, humidity_pct, sensor, at}
+        self._local_fan = False  # hysteresis memory of the local decision
+        # Main entrance LED (§10): "GREEN" / "RED_BLINK" until _entrance_until (clock seconds)
+        self._entrance_led: str | None = None
+        self._entrance_until = 0.0
+        self.last_entrance: dict[str, Any] | None = None  # last signal shown {id, result, display_name}
+        self.last_entrance_ack_error: str | None = None
         self.last_nonce: str | None = None
         self.tamper_response = False  # test hook: corrupt the next response check
 
@@ -181,16 +219,22 @@ class Esp32Sim:
             self.threshold_cm = int(cfg["presence_threshold_cm"])
         if 1000 <= int(cfg.get("door_open_ms", 0) or 0) <= 30000:
             self.door_open_ms = int(cfg["door_open_ms"])
+        self._apply_env_config(cfg)
         if r.data.get("command") == "EMERGENCY_CLOSE" and self.door != "CLOSED":
             self.door = "CLOSED"
         return r
 
     def set_distance(self, cm: float) -> Reply | None:
+        """Someone moves in front of the INSIDE sensor. The reply may ask for the intrusion
+        alarm (``alarm: true``), which the virtual device records in ``self.alarm_s``."""
         was = self.present
         self.distance_cm = cm
         if self.present != was:
-            return self.call("POST", "/device/presence", body={
+            r = self.call("POST", "/device/presence", body={
                 "present": self.present, "distance_cm": self.reading, "threshold_cm": self.threshold_cm})
+            if self.present and r.data.get("alarm"):
+                self.alarm_s = int(r.data.get("alarm_s") or 20)
+            return r
         return None
 
     def start(self, uid: str) -> Reply:
@@ -198,6 +242,16 @@ class Esp32Sim:
         if r.data.get("state") == "GRANTED":
             raise BadResponse("GRANTED en start: una sesión nueva nunca está concedida")
         self.session_id = r.data.get("session_id")
+        self.button_session = False
+        return r
+
+    def exit_button(self) -> Reply:
+        """Inside exit button: the backend opens only if someone is inside this door."""
+        r = self.call("POST", "/device/exit-button", body={"source": "BUTTON"})
+        if r.data.get("state") == "GRANTED":
+            raise BadResponse("GRANTED en exit-button: la decisión llega por el poll")
+        self.session_id = r.data.get("session_id")
+        self.button_session = bool(self.session_id)
         return r
 
     def poll(self, session_id: str | None = None) -> Reply:
@@ -213,10 +267,118 @@ class Esp32Sim:
         r = self.call("POST", f"/device/access/{session_id}/closed", body={"reason": reason})
         if self.session_id == session_id:
             self.session_id = None
+            self.button_session = False
         return r
 
     def event(self, type_: str, detail: str | None = None) -> Reply:
         return self.call("POST", "/device/event", body={"type": type_, "detail": detail})
+
+    # --------------------------------------------------------------- DHT11 (§11)
+    def _apply_env_config(self, cfg: dict) -> None:
+        """Same rules as the firmware: each pair is accepted only in range and consistent."""
+        th = self.env_thresholds
+        hi = _num(cfg.get("temp_high_c")) if "temp_high_c" in cfg else th["temp_high_c"]
+        crit = _num(cfg.get("temp_critical_c")) if "temp_critical_c" in cfg else th["temp_critical_c"]
+        if hi is not None and crit is not None and 15 <= hi <= 45 and 15 <= crit <= 50 and crit > hi:
+            th["temp_high_c"], th["temp_critical_c"] = hi, crit
+        lo = _num(cfg.get("humidity_low_pct")) if "humidity_low_pct" in cfg else th["humidity_low_pct"]
+        hh = _num(cfg.get("humidity_high_pct")) if "humidity_high_pct" in cfg else th["humidity_high_pct"]
+        if lo is not None and hh is not None and 0 <= lo <= 100 and 0 <= hh <= 100 and hh > lo:
+            th["humidity_low_pct"], th["humidity_high_pct"] = lo, hh
+
+    def _local_env(self, t: float | None, h: float | None) -> tuple[bool, bool]:
+        """Local fallback (backend unreachable / bad signature): fan with 1 °C hysteresis on
+        temp_high_c; alarm on temp_critical_c or humidity out of range. Sensor ERROR ⇒ both off."""
+        th = self.env_thresholds
+        if t is None or h is None:
+            self._local_fan = False
+            return False, False
+        if t >= th["temp_high_c"]:
+            self._local_fan = True
+        elif t < th["temp_high_c"] - FAN_HYSTERESIS_C:
+            self._local_fan = False
+        alarm = t >= th["temp_critical_c"] or h < th["humidity_low_pct"] or h > th["humidity_high_pct"]
+        return self._local_fan, alarm
+
+    def environment(self, temperature_c: float | None, humidity_pct: float | None, sensor: str = "OK") -> Reply:
+        """One DHT11 report (``POST /device/environment``) and the signed ``{fan, alarm}`` applied.
+
+        Like the firmware: ``sensor="OK"`` without both values counts as ``ERROR``; with the
+        sensor in ERROR the fan is off; if the reply is unsigned/forged/malformed or the backend
+        is unreachable, fan and alarm are decided locally and the error is re-raised."""
+        t, h = _num(temperature_c), _num(humidity_pct)
+        ok = sensor == "OK" and t is not None and h is not None
+        t, h = (round(t, 1), round(h, 1)) if ok else (None, None)
+        body = {"temperature_c": t, "humidity_pct": h, "sensor": "OK" if ok else "ERROR"}
+        self.sensors["dht"] = body["sensor"]
+        self.last_env = {**body, "at": self.clock()}
+        local_fan, local_alarm = self._local_env(t, h)
+        try:
+            r = self.call("POST", "/device/environment", body=body)
+            fan, alarm = r.data.get("fan"), r.data.get("alarm")
+            if r.status == 200 and not (isinstance(fan, bool) and isinstance(alarm, bool)):
+                raise BadResponse("respuesta de entorno sin fan/alarm booleanos")
+        except (BadResponse, OSError):
+            self.fan, self.env_alarm, self.env_local = local_fan, local_alarm, True
+            raise
+        if r.status != 200:  # signed error: same local fallback, the reply is returned as is
+            self.fan, self.env_alarm, self.env_local = local_fan, local_alarm, True
+            return r
+        self.env_local = False
+        self.fan = ok and (fan or local_fan)  # sensor ERROR ⇒ off; when in doubt, cool
+        self.env_alarm = alarm
+        return r
+
+    # --------------------------------------------------------------- main entrance (§10)
+    @property
+    def entrance_led(self) -> str:
+        """``"GREEN"`` (QR granted, during led_ms), ``"RED_BLINK"`` (denied) or ``"OFF"``."""
+        if self._entrance_led and self.clock() < self._entrance_until:
+            return self._entrance_led
+        return "OFF"
+
+    @property
+    def entrance_led_until(self) -> float | None:
+        """Epoch seconds when the current entrance LED pattern ends (None if off)."""
+        return self._entrance_until if self.entrance_led != "OFF" else None
+
+    def entrance_poll(self) -> Reply:
+        """``POST /device/entrance/poll``: a pending QR signal is shown (entrance LED) and then
+        acknowledged. Malformed signals are ignored (LED unchanged); the room servo never moves."""
+        r = self.call("POST", "/device/entrance/poll", body={})
+        if r.status != 200:
+            return r
+        sig = r.data.get("signal")
+        if sig is None:
+            return r
+        if not isinstance(sig, dict):
+            raise BadResponse("señal de entrada con formato inválido")
+        sid = sig.get("id")
+        if not isinstance(sid, str) or not SIGNAL_ID.fullmatch(sid):
+            raise BadResponse("id de señal inválido")
+        result = sig.get("result")
+        led_ms = sig.get("led_ms", 5000)
+        name = lcd_text(sig.get("display_name"), 40)
+        if result == "GRANTED":
+            if not isinstance(led_ms, int) or isinstance(led_ms, bool) or not ENTRANCE_LED_MS[0] <= led_ms <= ENTRANCE_LED_MS[1]:
+                raise BadResponse("led_ms fuera de rango")
+            if self.last_entrance and self.last_entrance.get("id") == sid:
+                return r  # never shown twice
+            self._entrance_led, self._entrance_until = "GREEN", self.clock() + led_ms / 1000
+        elif result == "DENIED":
+            if self.last_entrance and self.last_entrance.get("id") == sid:
+                return r
+            self._entrance_led, self._entrance_until = "RED_BLINK", self.clock() + ENTRANCE_DENIED_S
+        else:
+            return r  # unknown result: ignored, not acknowledged
+        self.last_entrance = {"id": sid, "result": result, "display_name": name,
+                              "led_ms": led_ms if result == "GRANTED" else None}
+        self.last_entrance_ack_error = None
+        try:
+            self.call("POST", f"/device/entrance/{sid}/ack", body={"shown": True})
+        except (BadResponse, OSError) as e:  # the signal was already shown; the ack is best effort
+            self.last_entrance_ack_error = str(e)
+        return r
 
     # --------------------------------------------------------------- high level
     def decide(self, reply: Reply, session_id: str) -> int | None:
@@ -225,8 +387,10 @@ class Esp32Sim:
         if reply.status != 200 or d.get("state") != "GRANTED" or d.get("session_id") != session_id:
             return None
         open_ms = d.get("open_ms")
-        if not isinstance(open_ms, int) or not 1000 <= open_ms <= 30000 or not self.present or self.door != "CLOSED":
+        # The HC-SR04 is inside the room (intrusion alarm): it is not an access factor.
+        if not isinstance(open_ms, int) or not 1000 <= open_ms <= 30000 or self.door != "CLOSED":
             return None
+        self.lcd = (str(d.get("greeting") or "Bienvenido"), str(d.get("display_name") or ""))
         return open_ms
 
     def run_access(self, uid: str, *, between_polls: Callable[[int], None] | None = None,
@@ -282,6 +446,10 @@ class Esp32Sim:
         return res
 
 
+# Name used by docs/contrato-qr-dht11.md §5.
+SimDevice = Esp32Sim
+
+
 # ------------------------------------------------------------------ CLI
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="ESP32 virtual de DC Guardian")
@@ -296,7 +464,16 @@ def main(argv: list[str] | None = None) -> int:
     acc.add_argument("--uid", required=True)
     acc.add_argument("--distance", type=float, default=30)
     acc.add_argument("--timeout", type=int, default=35, help="segundos esperando la decisión")
+    env = sub.add_parser("env", help="enviar una lectura del DHT11 (cada 10 s con --repeat)")
+    env.add_argument("--temp", type=float, help="temperatura °C (omitir con --error)")
+    env.add_argument("--hum", type=float, help="humedad %% (omitir con --error)")
+    env.add_argument("--error", action="store_true", help="simular el sensor en ERROR")
+    env.add_argument("--repeat", type=int, default=1, help="número de envíos (cada 10 s)")
+    ent = sub.add_parser("entrance", help="consultar la señal de la entrada principal (QR) cada segundo")
+    ent.add_argument("--seconds", type=int, default=30, help="segundos consultando")
     args = ap.parse_args(argv)
+    if args.cmd == "env" and not args.error and (args.temp is None or args.hum is None):
+        ap.error("env: indica --temp y --hum, o --error")
     if not args.secret:
         ap.error("falta --secret (o DCG_DEVICE_SECRET)")
 
@@ -305,6 +482,31 @@ def main(argv: list[str] | None = None) -> int:
         hb = dev.heartbeat()
         print(f"heartbeat HTTP {hb.status}: {hb.data}")
         if args.cmd == "heartbeat":
+            return 0
+        if args.cmd == "env":
+            for i in range(max(1, args.repeat)):
+                if i:
+                    time.sleep(10)
+                try:
+                    r = dev.environment(args.temp, args.hum, "ERROR" if args.error else "OK")
+                    print(f"entorno HTTP {r.status}: {r.data}")
+                except BadResponse as e:
+                    print(f"Respuesta rechazada: respaldo local ({e})", file=sys.stderr)
+                print(f"  ventilador={'ON' if dev.fan else 'OFF'} alarma={'ON' if dev.env_alarm else 'OFF'}"
+                      f"{' (local)' if dev.env_local else ''}")
+            return 0
+        if args.cmd == "entrance":
+            end = time.time() + args.seconds
+            while time.time() < end:
+                try:
+                    r = dev.entrance_poll()
+                    sig = r.data.get("signal")
+                    if sig:
+                        print(f"señal {sig.get('result')} {lcd_text(sig.get('display_name'), 40)} "
+                              f"→ LED {dev.entrance_led}")
+                except BadResponse as e:
+                    print(f"Señal ignorada (fail-closed): {e}", file=sys.stderr)
+                time.sleep(1)
             return 0
         if args.cmd == "run":
             dev.set_distance(args.distance)

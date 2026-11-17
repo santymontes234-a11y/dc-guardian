@@ -3,45 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Accesos · DC Guardian</title>
+  <title>Bitácora de accesos · Telecom Conecta · DC Guardian</title>
 </head>
 <body data-page="access">
   <main id="content">
-    <h1>Registro de accesos</h1>
+    <h1>Bitácora de accesos</h1>
+    <p class="muted" style="margin-top:-8px">Entrada principal (código QR) y sala de servidores (tarjeta RFID + rostro).</p>
     <section class="card">
       <div class="row" style="margin-bottom:12px">
-        <select id="state"><option value="">Todos</option><option value="CLOSED">Completados</option>
-          <option value="DENIED">Denegados</option><option value="TIMEOUT">Tiempo agotado</option>
-          <option value="AWAITING_FACE">Esperando rostro</option></select>
-        <select id="direction"><option value="">Entradas y salidas</option><option value="ENTRADA">Entradas</option>
-          <option value="SALIDA">Salidas</option></select>
-        <span class="spacer"></span><span class="muted" id="total"></span>
+        <label class="sr-only" for="zone">Zona</label>
+        <select id="zone">
+          <option value="">Todas las zonas</option>
+          <option value="ENTRADA_PRINCIPAL">Entrada principal (QR)</option>
+          <option value="SALA_SERVIDORES">Sala de servidores (RFID + rostro)</option>
+        </select>
+        <label class="sr-only" for="result">Resultado</label>
+        <select id="result"><option value="">Todos los resultados</option><option value="GRANTED">Permitidos</option>
+          <option value="DENIED">Denegados</option></select>
+        <label class="sr-only" for="method">Método</label>
+        <select id="method"><option value="">Todos los métodos</option><option value="QR">Código QR</option>
+          <option value="RFID+ROSTRO">RFID + rostro</option><option value="BOTON_SALIDA">Botón de salida</option></select>
+        <span class="spacer"></span><span class="muted" id="total" aria-live="polite"></span>
         <button class="btn" id="more">Cargar más</button>
       </div>
+      <p class="muted" id="legacy-note" hidden>El servidor todavía no expone la bitácora unificada:
+        se muestran solo los accesos de la sala de servidores.</p>
       <div class="table-wrap"><table class="table"><thead id="head"></thead><tbody id="rows"></tbody></table></div>
     </section>
   </main>
-  <script type="module">
-    import { ready } from "/js/layout.js";
-    import { api, guarded } from "/js/api.js";
-    import { connectEvents } from "/js/ws.js";
-    import { $, SESSION_HEAD, emptyRow, sessionRow } from "/js/ui.js";
-
-    await ready;
-    $("head").innerHTML = SESSION_HEAD;
-    let limit = 50;
-    async function load() {
-      const page = await guarded(() => api.get("/access-sessions", { state: $("state").value, direction: $("direction").value, limit }));
-      if (!page) return;
-      $("total").textContent = `${page.items.length} de ${page.total}`;
-      $("rows").innerHTML = page.items.map(sessionRow).join("") || emptyRow(7, "Sin registros");
-    }
-    $("state").addEventListener("change", load);
-    $("direction").addEventListener("change", load);
-    $("more").addEventListener("click", () => { limit = Math.min(limit + 50, 200); load(); });
-    let t;
-    connectEvents().on("access.*", () => { clearTimeout(t); t = setTimeout(load, 300); });
-    load();
-  </script>
+  <script type="module" src="/js/pages/access-log.js"></script>
 </body>
 </html>

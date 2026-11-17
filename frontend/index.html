@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DC Guardian · Acceso</title>
+  <title>Telecom Conecta · DC Guardian · Acceso</title>
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
@@ -12,6 +12,7 @@
     .login .card { width: min(380px, 100%); }
     .login h1 { margin: 0 0 4px; font-size: 22px; }
     .login p { margin: 0 0 16px; }
+    .login .company { margin: 0; font-size: 20px; font-weight: 800; color: var(--primary); }
     .login .error { color: var(--danger); min-height: 1.5em; margin: 0; }
   </style>
 </head>
@@ -19,18 +20,24 @@
   <main class="login">
     <form class="card stack" id="login">
       <div>
+        <p class="company">Telecom Conecta</p>
         <h1>DC Guardian</h1>
         <p class="muted">Control de acceso al Data Center</p>
+        <p class="muted"><time id="today"></time></p>
       </div>
       <label>Usuario <input name="username" autocomplete="username" required autofocus></label>
       <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
       <p class="error" id="error" role="alert"></p>
       <button class="btn btn-primary" type="submit">Entrar</button>
       <a class="muted" href="/pages/kiosk.html">Abrir kiosco de verificación facial</a>
+      <a class="muted" href="/pages/entrance.html">Abrir lector QR de la entrada principal</a>
     </form>
   </main>
   <script type="module">
     import { api, ApiError } from "/js/api.js";
+    import { startClock } from "/js/brand.js";
+
+    startClock(document.getElementById("today"), { withTime: false });
 
     const params = new URLSearchParams(location.search);
     const next = params.get("next");

@@ -13,6 +13,7 @@
 // al menú = añadir una entrada a NAV (solo integración edita esta lista).
 
 import { api, escapeHtml, guarded } from "/js/api.js";
+import { COMPANY, PRODUCT, startClock } from "/js/brand.js";
 
 export const NAV = [
   { key: "dashboard", label: "Panel", href: "/pages/dashboard.html" },
@@ -23,6 +24,7 @@ export const NAV = [
   { key: "alerts", label: "Alertas", href: "/pages/alerts.html" },
   { key: "audit", label: "Auditoría", href: "/pages/audit.html" },
   { key: "simulator", label: "Simulador", href: "/pages/simulator.html", simOnly: true },
+  { key: "entrance", label: "Entrada QR", href: "/pages/entrance.html", target: "_blank" },
   { key: "kiosk", label: "Kiosco", href: "/pages/kiosk.html", target: "_blank" },
 ];
 
@@ -47,14 +49,17 @@ function render(admin, simulation) {
   const header = document.createElement("header");
   header.className = "app-header";
   header.innerHTML = `
-    <a class="brand" href="/pages/dashboard.html">DC Guardian</a>
+    <a class="brand" href="/pages/dashboard.html"><span class="brand-company">${COMPANY}</span>
+      <span class="brand-product">${PRODUCT}</span></a>
     <nav class="app-nav">${links}</nav>
     <div class="session">
+      <time class="clock" id="header-clock"></time>
       ${simulation ? '<span class="badge badge-info">Simulación</span>' : ""}
       <span class="who">${escapeHtml(admin.full_name)} · ${escapeHtml(admin.role)}</span>
       <button type="button" class="btn btn-ghost" id="logout">Salir</button>
     </div>`;
   document.body.prepend(header);
+  startClock(header.querySelector("#header-clock"));
   document.body.classList.add(`role-${admin.role}`);
 
   header.querySelector("#logout").addEventListener("click", () =>

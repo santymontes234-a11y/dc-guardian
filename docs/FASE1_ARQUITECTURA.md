@@ -461,3 +461,18 @@ Cada fase termina con una revisión del `security-agent` y una pausa para tu val
 4. **Salida**: ¿se registra la salida (p. ej. botón o segunda pasada de tarjeta) para cerrar la solicitud como `FINALIZADA`? Propuesto: segunda pasada de tarjeta = salida, sin rostro.
 5. ~~**Servo**: ¿SG90 o MG996R?~~ **Resuelto: micro servo SG90 (9 g).** PWM 50 Hz, pulso 500–2400 µs con `ESP32Servo`; cerrado = 0°, abierto = 90°.
 6. **Idioma de la UI y del código**: propuesto UI en español, código/identificadores en inglés.
+
+---
+
+## 13. Ampliaciones posteriores al diseño aprobado
+
+> Nota añadida tras la implementación. El diseño de las secciones anteriores no se ha reescrito;
+> donde haya diferencias, mandan los documentos enlazados aquí.
+
+| Fecha | Cambio | Contrato |
+|-------|--------|----------|
+| 2026-11-15 | El **HC-SR04** pasa a estar **dentro de la sala** como alarma de intrusión (`POST /device/presence` → alerta `INTRUSION`) y deja de ser factor de acceso (`PRESENCE_LOST` y `SENSOR_ERROR` ya no deniegan). El **pulsador del GPIO 4** pasa a ser **botón de salida** (`POST /device/exit-button`), no cierre de emergencia | [protocolo-esp32.md §8–§9](protocolo-esp32.md) |
+| 2026-11-17 | Escenario **Telecom Conecta** (Proyecto Parcial 3): áreas `ENTRADA_PRINCIPAL` y `SALA_SERVIDORES`; roles *Administrador de TI*, *Ingeniero de red*, *Personal de limpieza* y *Proveedor*. **Acceso por QR** en la entrada principal (LED verde, GPIO 14), **DHT11** en la sala (GPIO 16) con ventilador (GPIO 2) y **bitácora** por zona y método (`GET /api/v1/access-log`). Tablas nuevas `qr_credentials`, `entrance_events` y `environment_readings` (migración 0006) | [contrato-qr-dht11.md](contrato-qr-dht11.md) · [protocolo-esp32.md §10–§11](protocolo-esp32.md) · [api.md](api.md) |
+
+La regla fundamental no cambia: el QR, igual que la tarjeta, **solo identifica**; la entrada
+principal también exige una solicitud `APROBADA` y vigente del Registro 2.

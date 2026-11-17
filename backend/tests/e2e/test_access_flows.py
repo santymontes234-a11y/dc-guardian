@@ -196,18 +196,21 @@ def test_revoked_between_face_and_opening(flow, f):
     assert d.decide(p, sid) is None
 
 
-def test_presence_lost_and_timeout(flow, f):
+def test_inside_sensor_is_not_an_access_factor_and_timeout(flow, f):
+    """The HC-SR04 is inside the room: the person at the door is not measured by it."""
     eng, card, _ = flow.authorized()
     d = flow.door.sim
-    d.set_distance(30)
+    d.set_distance(200)  # nobody near the inside sensor
     sid = d.start(card["uid"]).data["session_id"]
     flow.kiosk(sid, eng["_seed"])
-    d.set_distance(120)  # walks away before the decision
     p = d.poll(sid)
-    assert (p.data["state"], p.data["reason_code"]) == ("DENIED", "PRESENCE_LOST")
+    assert p.data["state"] == "GRANTED"
+    d.opened(sid, p.data["open_ms"])
+    d.closed(sid, "TIMER")
     # Timeout: nobody looks at the camera within DCG_ACCESS_SESSION_TIMEOUT_S
-    d.set_distance(30)
-    sid = d.start(card["uid"]).data["session_id"]
+    flow.door.sim.set_distance(200)
+    eng2, card2, _ = flow.authorized()
+    sid = d.start(card2["uid"]).data["session_id"]
     counts = run_access_sweep(utcnow() + timedelta(seconds=31))
     assert counts["timeouts"] == 1
     assert d.poll(sid).data["state"] == "TIMEOUT"
@@ -261,17 +264,13 @@ def test_sensor_without_response(flow, f):
     hw = {x["device_code"]: x for x in f.ok("GET", "/api/v1/devices/status/all")}["DC-DOOR-01"]["hw"]
     assert hw["sensors"]["ultrasonic"] == "TIMEOUT" and hw["distance_cm"] == -1
     assert any(a["type"] == "SENSOR_FAULT" for a in flow.alerts())
-    # A card read with no valid distance is refused (fail-closed), even with a valid card.
+    # The inside sensor failing does not block access (it only guards the room); the card +
+    # face + authorization flow still decides.
     r = d.call("POST", "/device/access/start", body={"uid": card["uid"], "distance_cm": -1})
-    assert (r.data["state"], r.data["reason_code"]) == ("DENIED", "SENSOR_ERROR")
-    # Sensor dies at decision time (after a good face match) → denied
-    d.sensors = {"rfid": "OK", "ultrasonic": "OK"}
-    d.set_distance(30)
-    sid = d.start(card["uid"]).data["session_id"]
+    assert r.data["state"] == "AWAITING_FACE"
+    sid = r.data["session_id"]
     flow.kiosk(sid, eng["_seed"])
-    d.sensors["ultrasonic"] = "TIMEOUT"
-    p = d.poll(sid)
-    assert (p.data["state"], p.data["reason_code"]) == ("DENIED", "SENSOR_ERROR")
+    assert d.poll(sid).data["state"] == "GRANTED"
 
 
 # ================================================================== protocol security

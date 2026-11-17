@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import ReadDb, _extract_token
+from app.api.deps import DbSession, ReadDb, _extract_token
 from app.api.v1.uploads import read_images
 from app.core.config import get_settings
 from app.core.errors import DomainError
@@ -23,7 +23,9 @@ from app.db.types import utcnow
 from app.models import AccessSession, Device, Engineer
 from app.models.enums import AccessDirection, AccessState, ActorType, AdminRole
 from app.services import access_engine as engine
+from app.schemas.entrance import QrScanIn, QrScanOut
 from app.services import biometrics
+from app.services import entrance as entrance_service
 from app.services.auth import admin_from_token
 from app.services.context import ActorCtx
 
@@ -113,3 +115,13 @@ async def verify(request: Request, ctx: KioskCtx):
     if len(session_id) != 32 or any(c not in "0123456789abcdef" for c in session_id):
         raise DomainError("VALIDATION_ERROR", "session_id inválido", 422)
     return await run_in_threadpool(verify_frames, session_id, [data for _, data in form.files], ctx)
+
+
+@kiosk.post("/entrance/scan", response_model=QrScanOut, response_model_exclude_none=True)
+def entrance_scan(body: QrScanIn, request: Request, ctx: KioskCtx, db: DbSession):
+    """QR read by the reception webcam (``DCG-QR1:<token>``). ``GRANTED`` only with an active,
+    unexpired QR of an ACTIVO engineer **and** an approved authorization in force now
+    (Registro 2) **and** the entrance device ONLINE. Every scan is logged and queues one LED
+    signal for the device. ``429`` above ``DCG_QR_SCAN_RATE_PER_MINUTE`` (20) per client."""
+    client = request.client.host if request.client else "?"
+    return entrance_service.scan(db, ctx, body.qr_text, f"{client}|{ctx.actor_type}:{ctx.actor_id}")

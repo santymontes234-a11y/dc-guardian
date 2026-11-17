@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "protocol.h"
+
 namespace dcg {
 
 namespace {
@@ -74,6 +76,10 @@ const char* lcdScreenName(LcdScreen s) {
     case LcdScreen::DOOR_OPEN: return "DOOR_OPEN";
     case LcdScreen::DOOR_CLOSING: return "DOOR_CLOSING";
     case LcdScreen::DOOR_CLOSED: return "DOOR_CLOSED";
+    case LcdScreen::ALARM: return "ALARM";
+    case LcdScreen::ENTRANCE_GRANTED: return "ENTRANCE_GRANTED";
+    case LcdScreen::ENTRANCE_DENIED: return "ENTRANCE_DENIED";
+    case LcdScreen::ENV_ALARM: return "ENV_ALARM";
   }
   return "?";
 }
@@ -108,6 +114,13 @@ void LcdView::onFeedback(Feedback f, const std::string& reason, uint32_t nowMs) 
   flashActive_ = true;
 }
 
+void LcdView::onEntrance(bool granted, const std::string& name, uint32_t nowMs) {
+  entranceActive_ = true;
+  entranceGranted_ = granted;
+  entranceName_ = sanitizeLcdText(name, 40);
+  entranceUntil_ = nowMs + t_.entranceMs;
+}
+
 LcdScreen LcdView::pick(const LcdInput& in, uint32_t now) {
   if (flashActive_ && !before(now, flashUntil_)) flashActive_ = false;
 
@@ -118,8 +131,10 @@ LcdScreen LcdView::pick(const LcdInput& in, uint32_t now) {
   }
   lastDoor_ = in.door;
   if (closedActive_ && !before(now, closedUntil_)) closedActive_ = false;
+  if (entranceActive_ && !before(now, entranceUntil_)) entranceActive_ = false;
 
   if (configError_) return LcdScreen::CONFIG_ERROR;
+  if (in.alarm) return LcdScreen::ALARM;
   if (!in.wifiUp && in.state != SystemState::BOOT) return LcdScreen::DISCONNECTED;
   if (in.door != DoorState::CLOSED) {
     if (flashActive_ && flash_ == LcdScreen::GRANTED) return LcdScreen::GRANTED;
@@ -129,8 +144,12 @@ LcdScreen LcdView::pick(const LcdInput& in, uint32_t now) {
   if (in.state == SystemState::CARD_READ) return LcdScreen::RFID_READ;
   if (in.state == SystemState::WAITING_DECISION)
     return phase_ == "AWAITING_FACE" ? LcdScreen::FACE : LcdScreen::VERIFYING;
+  // The main entrance is another door: its outcome shows only while the room is not mid-cycle.
+  if (entranceActive_) return entranceGranted_ ? LcdScreen::ENTRANCE_GRANTED : LcdScreen::ENTRANCE_DENIED;
   if (closedActive_) return LcdScreen::DOOR_CLOSED;
   if (flashActive_) return flash_;
+  if (in.env.alarm && (in.state == SystemState::IDLE || in.state == SystemState::PRESENCE))
+    return LcdScreen::ENV_ALARM;
 
   switch (in.state) {
     case SystemState::BOOT: return LcdScreen::BOOT;
@@ -161,6 +180,30 @@ std::string LcdView::distanceText(const SensorSnapshot& s) {
   return buf;
 }
 
+std::string LcdView::envText(const EnvStatus& e) {
+  if (e.sensor == DhtStatus::ERROR) return "TEMP/HUM: ERROR DHT";
+  if (e.sensor != DhtStatus::OK) return "TEMP --.-C HUM --%";
+  char buf[32];
+  std::snprintf(buf, sizeof buf, "TEMP %.1fC HUM %d%%", double(e.temperatureC),
+                int(e.humidityPct + 0.5f));
+  return buf;
+}
+
+void LcdView::setName(int row, const std::string& name, const char* fallback) {
+  // Up to 40 chars over two lines, wrapped at the last space when possible.
+  if (name.empty()) { set(row, fallback); return; }
+  std::string a = name, b;
+  if (a.size() > size_t(kCols)) {
+    size_t cut = a.rfind(' ', size_t(kCols));
+    if (cut == std::string::npos || cut == 0) cut = size_t(kCols);
+    b = a.substr(cut);
+    a = a.substr(0, cut);
+    while (!b.empty() && b[0] == ' ') b.erase(0, 1);
+  }
+  set(row, a);
+  if (row + 1 < kRows) set(row + 1, b.empty() ? fallback : b);
+}
+
 void LcdView::clearLines() {
   for (auto& l : lines_) {
     std::memset(l, ' ', kCols);
@@ -180,7 +223,7 @@ void LcdView::render(const LcdInput& in, uint32_t now) {
   const char* why = reasonShort(flashReason_);
   const std::string reason = why ? why : fit(flashReason_);
   char thr[24];
-  std::snprintf(thr, sizeof thr, "Umbral: %d cm", int(in.thresholdCm + 0.5f));
+  std::snprintf(thr, sizeof thr, "Alarma si < %d cm", int(in.thresholdCm + 0.5f));
 
   clearLines();
   switch (screen_) {
@@ -215,15 +258,42 @@ void LcdView::render(const LcdInput& in, uint32_t now) {
     case LcdScreen::WAIT_CARD:
       set(0, "DC GUARDIAN  ONLINE");
       set(1, "Esperando tarjeta");
-      set(2, "RFID...");
+      // Resting screen: room temperature/humidity once the DHT11 has reported.
+      set(2, in.env.sensor == DhtStatus::UNKNOWN ? std::string(thr) : envText(in.env));
       set(3, dist);
       break;
     case LcdScreen::PRESENCE:
-      set(0, "PRESENCIA DETECTADA");
-      set(1, "Acerque su tarjeta");
-      set(2, thr);
+      set(0, "DC GUARDIAN  ONLINE");
+      set(1, "Esperando tarjeta");
+      set(2, "Sala: persona dentro");
       set(3, dist);
       break;
+    case LcdScreen::ALARM:
+      set(0, "!!!!  ALARMA  !!!!");
+      set(1, "Intruso detectado");
+      set(2, "dentro de la sala");
+      set(3, dist);
+      break;
+    case LcdScreen::ENTRANCE_GRANTED:
+      set(0, "ENTRADA PRINCIPAL");
+      set(1, "ACCESO QR OK");
+      setName(2, entranceName_, "");
+      break;
+    case LcdScreen::ENTRANCE_DENIED:
+      set(0, "ENTRADA PRINCIPAL");
+      set(1, "QR DENEGADO");
+      break;
+    case LcdScreen::ENV_ALARM: {
+      const EnvThresholds& th = in.env.thresholds;
+      set(0, "ALARMA AMBIENTAL");
+      set(1, envText(in.env));
+      if (in.env.temperatureC >= th.tempCriticalC) set(2, "Temperatura critica");
+      else if (in.env.humidityPct < th.humidityLowPct || in.env.humidityPct > th.humidityHighPct)
+        set(2, "Humedad fuera rango");
+      else set(2, "Revise la sala");
+      set(3, std::string("Ventilador: ") + (in.env.fan ? "ON" : "OFF"));
+      break;
+    }
     case LcdScreen::RFID_READ:
       set(0, "RFID DETECTADO");
       set(1, "UID " + uid_);
@@ -244,8 +314,21 @@ void LcdView::render(const LcdInput& in, uint32_t now) {
       break;
     case LcdScreen::GRANTED:
       set(0, "ACCESO AUTORIZADO");
-      set(1, "Bienvenido");
-      set(2, "Abriendo puerta...");
+      set(1, greeting_.empty() ? "Bienvenido" : greeting_);
+      if (name_.empty()) {
+        set(2, "Abriendo puerta...");
+      } else {  // up to 40 chars over two lines, wrapped at the last space when possible
+        std::string a = name_, b;
+        if (a.size() > size_t(kCols)) {
+          size_t cut = a.rfind(' ', size_t(kCols));
+          if (cut == std::string::npos || cut == 0) cut = size_t(kCols);
+          b = a.substr(cut);
+          a = a.substr(0, cut);
+          while (!b.empty() && b[0] == ' ') b.erase(0, 1);
+        }
+        set(2, a);
+        set(3, b.empty() ? "Abriendo puerta..." : b);
+      }
       break;
     case LcdScreen::DENIED:
       set(0, "ACCESO DENEGADO");

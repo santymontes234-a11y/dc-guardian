@@ -119,9 +119,10 @@ void test_poll_signs_query_and_accepts_signed_grant() {
 
 void test_nonces_are_unique() {
   gw->reply = "{}";
-  client->presence(true, 30, 50);
+  PresenceReply pr;
+  client->presence(true, 30, 50, pr);
   std::string n1 = gw->lastHeaders["X-Nonce"];
-  client->presence(false, 90, 50);
+  client->presence(false, 90, 50, pr);
   TEST_ASSERT_TRUE(n1 != gw->lastHeaders["X-Nonce"]);
 }
 
@@ -175,6 +176,89 @@ void test_heartbeat_reply_parsed() {
   TEST_ASSERT_EQUAL(int(Command::EMERGENCY_CLOSE), int(r.command));
 }
 
+// ------------------------------------------------------------------ DHT11 / entrance (§10, §11)
+static const std::string kSig = "0123456789abcdef0123456789abcdef";
+
+void test_environment_signed_and_parsed() {
+  gw->reply = R"({"ok":true,"fan":true,"alarm":false})";
+  EnvReading r;
+  r.sensorOk = true;
+  r.temperatureC = 28.04f;
+  r.humidityPct = 40.0f;
+  EnvReply e;
+  TEST_ASSERT_EQUAL(int(ApiResult::OK), int(client->environment(r, e)));
+  TEST_ASSERT_TRUE(gw->requestSignatureOk);
+  TEST_ASSERT_EQUAL_STRING("POST", gw->lastMethod.c_str());
+  TEST_ASSERT_EQUAL_STRING("/api/v1/device/environment", gw->lastPathAndQuery.c_str());
+  TEST_ASSERT_EQUAL_STRING(R"({"temperature_c":28,"humidity_pct":40,"sensor":"OK"})", gw->lastBody.c_str());
+  TEST_ASSERT_TRUE(e.fan);
+  TEST_ASSERT_FALSE(e.alarm);
+}
+
+void test_environment_unsigned_or_forged_rejected() {
+  EnvReading r;
+  r.sensorOk = true;
+  r.temperatureC = 24;
+  r.humidityPct = 50;
+  for (Mode m : {Mode::UNSIGNED, Mode::WRONG_KEY, Mode::STALE}) {
+    gw->mode = m;
+    gw->reply = R"({"ok":true,"fan":true,"alarm":true})";
+    EnvReply e;
+    TEST_ASSERT_EQUAL(int(ApiResult::BAD_SIGNATURE), int(client->environment(r, e)));
+    TEST_ASSERT_FALSE(e.fan);
+    TEST_ASSERT_FALSE(e.alarm);
+  }
+  gw->mode = Mode::HONEST;
+  gw->reply = R"({"ok":true})";
+  EnvReply e;
+  TEST_ASSERT_EQUAL(int(ApiResult::BAD_PAYLOAD), int(client->environment(r, e)));
+}
+
+void test_entrance_poll_and_ack() {
+  gw->reply = R"({"signal":{"id":")" + kSig + R"(","result":"GRANTED","led_ms":5000,"display_name":"Ana"}})";
+  EntrancePollReply p;
+  TEST_ASSERT_EQUAL(int(ApiResult::OK), int(client->entrancePoll(p)));
+  TEST_ASSERT_TRUE(gw->requestSignatureOk);
+  TEST_ASSERT_EQUAL_STRING("/api/v1/device/entrance/poll", gw->lastPathAndQuery.c_str());
+  TEST_ASSERT_EQUAL_STRING("{}", gw->lastBody.c_str());
+  TEST_ASSERT_TRUE(p.hasSignal);
+  TEST_ASSERT_EQUAL(int(EntranceResult::GRANTED), int(p.signal.result));
+
+  gw->reply = R"({"ok":true})";
+  TEST_ASSERT_EQUAL(int(ApiResult::OK), int(client->entranceAck(kSig)));
+  TEST_ASSERT_TRUE(gw->requestSignatureOk);
+  TEST_ASSERT_EQUAL_STRING(("/api/v1/device/entrance/" + kSig + "/ack").c_str(), gw->lastPathAndQuery.c_str());
+  TEST_ASSERT_EQUAL_STRING(R"({"shown":true})", gw->lastBody.c_str());
+}
+
+void test_entrance_poll_unsigned_or_forged_ignored() {
+  for (Mode m : {Mode::UNSIGNED, Mode::WRONG_KEY, Mode::STALE}) {
+    gw->mode = m;
+    gw->reply = R"({"signal":{"id":")" + kSig + R"(","result":"GRANTED","led_ms":5000}})";
+    EntrancePollReply p;
+    TEST_ASSERT_EQUAL(int(ApiResult::BAD_SIGNATURE), int(client->entrancePoll(p)));
+    TEST_ASSERT_FALSE(p.hasSignal);
+  }
+  // Replay of a captured GRANTED signal on a later poll: bound to the old nonce
+  gw->mode = Mode::HONEST;
+  gw->savedSig.clear();
+  gw->reply = R"({"signal":{"id":")" + kSig + R"(","result":"GRANTED","led_ms":5000}})";
+  EntrancePollReply p;
+  TEST_ASSERT_EQUAL(int(ApiResult::OK), int(client->entrancePoll(p)));
+  gw->mode = Mode::REPLAY;
+  EntrancePollReply p2;
+  TEST_ASSERT_EQUAL(int(ApiResult::BAD_SIGNATURE), int(client->entrancePoll(p2)));
+  TEST_ASSERT_FALSE(p2.hasSignal);
+}
+
+void test_entrance_ack_invalid_id_never_reaches_network() {
+  gw->lastMethod.clear();
+  TEST_ASSERT_EQUAL(int(ApiResult::BAD_PAYLOAD), int(client->entranceAck("../../device/heartbeat")));
+  TEST_ASSERT_EQUAL(int(ApiResult::BAD_PAYLOAD), int(client->entranceAck("0123456789ABCDEF0123456789ABCDEF")));
+  TEST_ASSERT_EQUAL(int(ApiResult::BAD_PAYLOAD), int(client->entranceAck("")));
+  TEST_ASSERT_TRUE(gw->lastMethod.empty());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_requests_are_signed_correctly);
@@ -190,5 +274,10 @@ int main() {
   RUN_TEST(test_clock_not_synced_sends_nothing);
   RUN_TEST(test_invalid_ids_never_reach_the_network);
   RUN_TEST(test_heartbeat_reply_parsed);
+  RUN_TEST(test_environment_signed_and_parsed);
+  RUN_TEST(test_environment_unsigned_or_forged_rejected);
+  RUN_TEST(test_entrance_poll_and_ack);
+  RUN_TEST(test_entrance_poll_unsigned_or_forged_ignored);
+  RUN_TEST(test_entrance_ack_invalid_id_never_reaches_network);
   return UNITY_END();
 }

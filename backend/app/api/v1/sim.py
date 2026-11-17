@@ -45,6 +45,12 @@ class FaceIn(BaseModel):
     mode: Literal["match", "other", "stranger"] = "match"
 
 
+class EnvironmentSimIn(BaseModel):
+    temperature_c: float | None = Field(default=None, ge=-40, le=125)
+    humidity_pct: float | None = Field(default=None, ge=0, le=100)
+    sensor: Literal["OK", "ERROR"] = "OK"
+
+
 @router.get("/state")
 def state(_: AdminOnly, db: ReadDb):
     cards = db.execute(select(RfidCard).order_by(RfidCard.id)).scalars().all()
@@ -91,10 +97,6 @@ def heartbeat(device_code: Code, _: AdminOnly):
 @router.post("/{device_code}/card")
 def card(device_code: Code, body: CardIn, _: AdminOnly):
     vd = sim.door(device_code)
-    if not vd.sim.present:
-        # Same rule as the firmware: without local presence the card read never reaches the backend.
-        return {"device": vd.state(), "reply": {"action": "start", "error":
-                "Sin presencia frente a la puerta: el ESP32 ignora la tarjeta (acércate primero)"}}
     out = sim.call(vd, lambda: vd.sim.start(body.uid), "start")
     return {"device": vd.state(), "reply": out}
 
@@ -183,3 +185,21 @@ def enroll_demo_faces(ctx: AdminCtx, db: DbSession):
             db.rollback()
             done.append({"engineer": pk, "error": e.code})
     return {"enrolled": done}
+
+
+@router.post("/{device_code}/environment")
+def environment(device_code: Code, body: EnvironmentSimIn, _: AdminOnly):
+    """Virtual DHT11 reading → signed ``POST /device/environment``; the device applies ``fan``/``alarm``."""
+    vd = sim.door(device_code)
+    send = vd.require("environment")
+    out = sim.call(vd, lambda: send(body.temperature_c, body.humidity_pct, body.sensor), "environment")
+    return {"device": vd.state(), "reply": out}
+
+
+@router.post("/{device_code}/entrance-poll")
+def entrance_poll(device_code: Code, _: AdminOnly):
+    """One signed ``POST /device/entrance/poll``: a pending QR signal lights the virtual entrance
+    LED (``GREEN`` / ``RED_BLINK``) and is acknowledged."""
+    vd = sim.door(device_code)
+    out = sim.call(vd, vd.require("entrance_poll"), "entrance_poll")
+    return {"device": vd.state(), "reply": out}

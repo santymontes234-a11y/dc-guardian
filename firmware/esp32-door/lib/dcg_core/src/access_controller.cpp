@@ -26,6 +26,15 @@ const char* systemStateName(SystemState s) {
   return "?";
 }
 
+const char* dhtStatusName(DhtStatus s) {
+  switch (s) {
+    case DhtStatus::UNKNOWN: return "UNKNOWN";
+    case DhtStatus::OK: return "OK";
+    case DhtStatus::ERROR: return "ERROR";
+  }
+  return "?";
+}
+
 void AccessController::setState(SystemState s) {
   if (s == state_) return;
   hal_.log(std::string("state ") + systemStateName(state_) + " -> " + systemStateName(s));
@@ -61,14 +70,48 @@ void AccessController::abortSession(const char* why, Feedback f) {
   hal_.feedback(f, why);
   sessionId_.clear();
   pollErrors_ = 0;
+  buttonExit_ = false;
   restingState(hal_.sensor());
+}
+
+void AccessController::emergencyClose(CloseReason r) {
+  hal_.closeDoor(r);
+  hal_.cancelEntrance();  // fail-closed for the main entrance too: green LED off now
 }
 
 void AccessController::localEmergencyClose() {
   hal_.log("LOCAL emergency close");
-  hal_.closeDoor(CloseReason::LOCAL_BUTTON);
+  emergencyClose(CloseReason::LOCAL_BUTTON);
   if (state_ == SystemState::WAITING_DECISION || state_ == SystemState::CARD_READ)
     abortSession("LOCAL_EMERGENCY", Feedback::DENIED);
+}
+
+void AccessController::requestExitByButton() {
+  const uint32_t now = hal_.millis();
+  if (!online_) { hal_.log("exit button ignored: OFFLINE (cannot verify)"); hal_.feedback(Feedback::OFFLINE, "OFFLINE"); return; }
+  if (!sessionId_.empty() || hal_.doorState() != DoorState::CLOSED) { hal_.log("exit button ignored: busy"); return; }
+  hal_.log("exit button -> backend");
+  setState(SystemState::CARD_READ);
+  StartReply r;
+  ApiResult res = backend_.exitButton(r);
+  if (res != ApiResult::OK) { abortSession(apiResultName(res), Feedback::ERROR); return; }
+  if (r.sessionId.empty() || r.state == "DENIED" || r.state == "TIMEOUT") {
+    abortSession(r.reasonCode.empty() ? r.state.c_str() : r.reasonCode.c_str(), Feedback::DENIED);
+    return;
+  }
+  beginSession(now, r, true);
+}
+
+void AccessController::beginSession(uint32_t now, const StartReply& r, bool byButton) {
+  sessionId_ = r.sessionId;
+  buttonExit_ = byButton;
+  pollMs_ = r.pollMs;
+  pollErrors_ = 0;
+  sessionDeadlineMs_ = now + r.timeoutS * 1000 + t_.sessionGraceMs;
+  nextPollMs_ = now + pollMs_;
+  hal_.log("session " + sessionId_ + " " + r.state + (byButton ? " (exit button)" : ""));
+  hal_.onSessionPhase(r.state);
+  setState(SystemState::WAITING_DECISION);
 }
 
 void AccessController::queueConfirm(bool opened, const std::string& sid, uint32_t openMs,
@@ -122,6 +165,7 @@ void AccessController::handleDoorEvents(uint32_t now) {
       queueConfirm(false, ev.sessionId, 0, ev.reason, now);
       if (state_ == SystemState::DOOR_OPEN || state_ == SystemState::DOOR_CLOSING) {
         sessionId_.clear();
+        buttonExit_ = false;
         restingState(hal_.sensor());
       }
     }
@@ -155,6 +199,7 @@ void AccessController::handleHeartbeat(uint32_t now, bool force) {
   hb.sessionId = sessionId_;
   hb.rfidOk = hal_.rfidOk();
   hb.ultrasonicOk = !s.fault;
+  hb.dhtOk = dhtOk_;
 
   HeartbeatReply reply;
   ApiResult r = backend_.heartbeat(hb, cfg_, reply);
@@ -166,7 +211,7 @@ void AccessController::handleHeartbeat(uint32_t now, bool force) {
     if (reply.unknownCommand) hal_.log("ignored unknown/unsupported remote command");
     if (reply.command == Command::EMERGENCY_CLOSE) {
       hal_.log("remote EMERGENCY_CLOSE");
-      hal_.closeDoor(CloseReason::EMERGENCY);
+      emergencyClose(CloseReason::EMERGENCY);
       if (state_ == SystemState::WAITING_DECISION) abortSession("EMERGENCY_CLOSE", Feedback::DENIED);
     }
     return;
@@ -184,11 +229,30 @@ void AccessController::handlePresence(const SensorSnapshot& s) {
   if (s.present == lastPresent_) return;
   lastPresent_ = s.present;
   hal_.log(std::string("presence ") + (s.present ? "ON" : "OFF") + " at " +
-           formatDistance(s.distanceCm) + " cm");
-  if (online_) backend_.presence(s.present, s.distanceCm, cfg_.presenceThresholdCm);  // best-effort
+           formatDistance(s.distanceCm) + " cm (inside the room)");
+  const uint32_t now = hal_.millis();
+  ApiResult r = ApiResult::NETWORK_ERROR;
+  PresenceReply pr;
+  if (online_) r = backend_.presence(s.present, s.distanceCm, cfg_.presenceThresholdCm, pr);
+  if (!s.present) return;
+  if (r == ApiResult::OK) {
+    if (pr.alarm) {
+      hal_.log("INTRUSION: someone inside and nobody authorized -> alarm " + std::to_string(pr.alarmMs) + " ms");
+      hal_.alarm(pr.alarmMs);
+    }
+    return;
+  }
+  // Cannot ask the backend who is inside: fail-secure local alarm (except right after boot).
+  if (!reached(now, bootMs_ + t_.alarmBootGraceMs)) {
+    hal_.log("presence while starting up: no local alarm yet");
+    return;
+  }
+  hal_.log(std::string("INTRUSION (backend unreachable: ") + apiResultName(r) + ") -> local alarm");
+  hal_.alarm(t_.localAlarmMs);
 }
 
 void AccessController::handleCard(uint32_t now, const SensorSnapshot& s) {
+  (void)s;
   std::string uid;
   if (!hal_.readCard(uid)) return;  // the reader is always drained, even when offline
   if (!isValidUid(uid)) return;
@@ -198,7 +262,6 @@ void AccessController::handleCard(uint32_t now, const SensorSnapshot& s) {
 
   if (!online_) { hal_.log("card ignored: OFFLINE"); hal_.feedback(Feedback::OFFLINE, "OFFLINE"); return; }
   if (state_ == SystemState::ERROR) { hal_.log("card ignored: ERROR"); hal_.feedback(Feedback::ERROR, "SENSOR_ERROR"); return; }
-  if (!s.present) { hal_.log("card ignored: no presence"); hal_.feedback(Feedback::DENIED, "NO_PRESENCE"); return; }
   if (hal_.doorState() != DoorState::CLOSED) return;
 
   hal_.log("card " + uid + " -> backend");
@@ -211,17 +274,11 @@ void AccessController::handleCard(uint32_t now, const SensorSnapshot& s) {
     abortSession(r.reasonCode.empty() ? r.state.c_str() : r.reasonCode.c_str(), Feedback::DENIED);
     return;
   }
-  sessionId_ = r.sessionId;
-  pollMs_ = r.pollMs;
-  pollErrors_ = 0;
-  sessionDeadlineMs_ = now + r.timeoutS * 1000 + t_.sessionGraceMs;
-  nextPollMs_ = now + pollMs_;
-  hal_.log("session " + sessionId_ + " " + r.state);
-  hal_.onSessionPhase(r.state);
-  setState(SystemState::WAITING_DECISION);
+  beginSession(now, r, false);
 }
 
 void AccessController::handleWaiting(uint32_t now, const SensorSnapshot& s) {
+  (void)s;  // the inside HC-SR04 is not an access factor
   if (!online_) { abortSession("OFFLINE", Feedback::OFFLINE); return; }
   if (reached(now, sessionDeadlineMs_)) { abortSession("TIMEOUT", Feedback::DENIED); return; }
   if (!reached(now, nextPollMs_)) return;
@@ -238,11 +295,11 @@ void AccessController::handleWaiting(uint32_t now, const SensorSnapshot& s) {
   if (d.sessionId != sessionId_) { abortSession("SESSION_MISMATCH", Feedback::ERROR); return; }
 
   if (d.state == "GRANTED") {
-    if (!s.present) { abortSession("PRESENCE_LOST", Feedback::DENIED); return; }
     if (hal_.doorState() != DoorState::CLOSED) { abortSession("DOOR_BUSY", Feedback::ERROR); return; }
     OpenGrant grant(sessionId_, d.openMs);
     if (!hal_.openDoor(grant)) { abortSession("OPEN_REJECTED", Feedback::ERROR); return; }
     hal_.log("GRANTED -> opening for " + std::to_string(d.openMs) + " ms");
+    hal_.onGranted(d.greeting, d.displayName);
     hal_.feedback(Feedback::GRANTED, "");
     setState(SystemState::DOOR_OPEN);
     return;
@@ -257,6 +314,7 @@ void AccessController::handleWaiting(uint32_t now, const SensorSnapshot& s) {
 
 void AccessController::tick() {
   const uint32_t now = hal_.millis();
+  if (!booted_) { booted_ = true; bootMs_ = now; }
   handleDoorEvents(now);
 
   const bool wasOnline = online_;
@@ -266,7 +324,7 @@ void AccessController::tick() {
   } else {
     handleHeartbeat(now, state_ == SystemState::BOOT);
   }
-  if (wasOnline && !online_) hal_.closeDoor(CloseReason::EMERGENCY);  // fail-closed
+  if (wasOnline && !online_) emergencyClose(CloseReason::EMERGENCY);  // fail-closed
 
   const SensorSnapshot s = hal_.sensor();
   handlePresence(s);

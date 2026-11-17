@@ -148,9 +148,24 @@ void Lcd2004::onSessionPhase(const std::string& state) {
   view_.onSessionPhase(state);
 }
 
+void Lcd2004::onGranted(const std::string& greeting, const std::string& name) {
+  Lock l(mtx_);
+  view_.onGranted(greeting, name);
+}
+
 void Lcd2004::onFeedback(Feedback f, const std::string& reason) {
   Lock l(mtx_);
   view_.onFeedback(f, reason, ::millis());
+}
+
+void Lcd2004::onEntrance(bool granted, const std::string& name) {
+  Lock l(mtx_);
+  view_.onEntrance(granted, name, ::millis());
+}
+
+void Lcd2004::cancelEntrance() {
+  Lock l(mtx_);
+  view_.cancelEntrance();
 }
 
 void Lcd2004::setConfigError() {
@@ -196,6 +211,8 @@ void Lcd2004::taskLoop() {
         in.door = hal_->doorState();
         in.sensor = hal_->sensor();
         in.rfidOk = hal_->rfidOk();
+        in.alarm = hal_->alarmActive();
+        in.env = hal_->envStatus();
       }
       {
         Lock l(mtx_);

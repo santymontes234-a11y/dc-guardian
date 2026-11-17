@@ -8,6 +8,8 @@ gateway exists, and inject faults the real backend never produces.
 
     python3 tools/mock_gateway.py --secret <64hex> [--port 8000] [--scenario grant]
 
+Main entrance: POST /mock/entrance {"result": "GRANTED"|"DENIED", "led_ms": 5000} (localhost) queues one signal.
+
 Scenarios (changeable at runtime: POST /mock/scenario {"scenario": "..."} from localhost):
     grant      GRANTED after 2 polls (open_ms = --open-ms)
     deny       DENIED FACE_MISMATCH after 2 polls
@@ -67,6 +69,8 @@ class Gateway:
         self.events: list[dict] = []  # everything the device reported (for tests)
         self.pending_command: str | None = None
         self.captured: tuple[str, str, bytes] | None = None  # (ts, sig, body) for "replay"
+        self.fan = False  # DHT11 fan state (hysteresis memory)
+        self.entrance_signal: dict | None = None  # queued main-entrance signal (POST /mock/entrance)
 
     def log(self, kind: str, **data):
         entry = {"t": round(time.time(), 3), "kind": kind, **data}
@@ -104,6 +108,23 @@ class Gateway:
             return 200, {"ok": True}
         if sub == "/device/event" and method == "POST":
             self.log("event", type=body.get("type"), detail=body.get("detail"))
+            return 200, {"ok": True}
+        # DHT11 (protocolo §11): same fan/alarm rule as the backend, default thresholds.
+        if sub == "/device/environment" and method == "POST":
+            t, h = body.get("temperature_c"), body.get("humidity_pct")
+            ok = body.get("sensor") == "OK" and isinstance(t, (int, float)) and isinstance(h, (int, float))
+            self.fan = ok and (t >= 27 or (self.fan and t >= 26))
+            alarm = ok and (t >= 32 or h < 20 or h > 80)
+            self.log("environment", temperature_c=t, humidity_pct=h, sensor=body.get("sensor"), fan=self.fan, alarm=alarm)
+            return 200, {"ok": True, "fan": self.fan, "alarm": alarm}
+        # Main entrance QR signal (protocolo §10): POST /mock/entrance {"result": "GRANTED"} queues one.
+        if sub == "/device/entrance/poll" and method == "POST":
+            sig, self.entrance_signal = self.entrance_signal, None
+            if sig:
+                self.log("entrance_poll", **sig)
+            return 200, {"signal": sig}
+        if sub.startswith("/device/entrance/") and sub.endswith("/ack") and method == "POST":
+            self.log("entrance_ack", id=sub.split("/")[3], shown=body.get("shown"))
             return 200, {"ok": True}
         if sub == "/device/access/start" and method == "POST":
             self.log("start", uid=body.get("uid"), distance_cm=body.get("distance_cm"))
@@ -170,6 +191,13 @@ def make_handler(gw: Gateway):
             url = urlsplit(self.path)
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length else b""
+            if url.path == "/mock/entrance" and self.client_address[0] == "127.0.0.1":
+                req = json.loads(raw or b"{}")
+                gw.entrance_signal = {"id": secrets.token_hex(16), "result": req.get("result", "GRANTED"),
+                                      "led_ms": int(req.get("led_ms", 5000)), "display_name": req.get("display_name", "Ana Lopez")}
+                gw.log("entrance_queued", **gw.entrance_signal)
+                self._send(200, {"ok": True}, None, url.path)
+                return
             if url.path == "/mock/scenario" and self.client_address[0] == "127.0.0.1":
                 gw.scenario = json.loads(raw or b"{}").get("scenario", gw.scenario)
                 gw.log("scenario", scenario=gw.scenario)

@@ -2,6 +2,7 @@ import { ready } from "/js/layout.js";
 import { api, ApiError, escapeHtml, fmtDate, guarded, toast } from "/js/api.js";
 import { FaceCapture } from "/js/face-capture.js";
 import { fmtDay, initials, statusBadge } from "/js/pages/engineers-common.js";
+import { credentialBlob, drawCredential } from "/js/qr-credential.js";
 
 const admin = await ready;
 const isAdmin = admin.role === "admin";
@@ -10,6 +11,8 @@ const params = new URLSearchParams(location.search);
 const id = Number(params.get("id"));
 let eng = null;
 let profile = null;
+let qr = null;          // estado GET /engineers/{id}/qr
+let issued = null;      // { canvas, qrText } solo mientras el diálogo de emisión está abierto
 
 const CARD_TONE = { ACTIVA: "ok", BLOQUEADA: "warn", PERDIDA: "danger", BAJA: "muted" };
 
@@ -29,6 +32,7 @@ async function reload() {
   eng = e;
   profile = p;
   render();
+  await loadQr();
 }
 
 // ------------------------------------------------------------------ render
@@ -275,4 +279,135 @@ $("erase-form").addEventListener("submit", async (ev) => {
   eng = res.engineer;
   profile = null;
   render();
+});
+
+// ------------------------------------------------------------------ credencial QR
+
+async function loadQr() {
+  try {
+    qr = await api.get(`/engineers/${id}/qr`);
+  } catch (err) {
+    qr = null;
+    if (err instanceof ApiError && err.status === 404) qr = { active: false };
+    else if (err instanceof ApiError && err.status === 403) {
+      $("qr-status").innerHTML = '<p class="muted" style="margin:0">Solo los administradores pueden consultar la credencial QR.</p>';
+      $("qr-issue").hidden = true;
+      $("qr-revoke").hidden = true;
+      return;
+    } else if (!(err instanceof ApiError && err.status === 401)) {
+      $("qr-status").innerHTML = `<p class="muted" style="margin:0">No se pudo consultar la credencial: ${escapeHtml(err.message)}</p>`;
+      return;
+    }
+  }
+  renderQr();
+}
+
+function renderQr() {
+  const erased = eng?.status === "ELIMINADO";
+  const active = Boolean(qr?.active);
+  $("qr-issue").hidden = erased || !isAdmin;
+  $("qr-issue").textContent = active ? "Generar nuevo QR" : "Generar QR";
+  $("qr-revoke").hidden = !active || !isAdmin;
+  if (!qr) return;
+  const rows = [["Estado", active ? '<span class="badge badge-ok">Activa</span>'
+    : '<span class="badge badge-muted">Sin credencial activa</span>']];
+  if (qr.prefix) rows.push(["Prefijo", `<span class="mono">${escapeHtml(qr.prefix)}</span>`]);
+  if (active || qr.created_at) rows.push(["Emitida", fmtDate(qr.created_at)]);
+  if (active) rows.push(["Vence", qr.expires_at ? fmtDate(qr.expires_at) : "Sin vencimiento"]);
+  if (active || qr.last_used_at) rows.push(["Último uso", qr.last_used_at ? fmtDate(qr.last_used_at) : "Nunca"]);
+  $("qr-status").innerHTML = `<dl class="qr-dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+}
+
+$("qr-issue").addEventListener("click", async () => {
+  if (qr?.active && !confirm(`${eng.engineer_id} ya tiene una credencial QR activa (prefijo ${qr.prefix ?? "?"}). `
+    + "Al generar una nueva, la anterior queda revocada. ¿Continuar?")) return;
+  const btn = $("qr-issue");
+  btn.disabled = true;
+  try {
+    const r = await api.post(`/engineers/${id}/qr`);
+    if (!r?.qr_text) throw new Error("El servidor no devolvió el código");
+    const canvas = drawCredential({
+      qrText: r.qr_text,
+      name: r.engineer?.full_name ?? eng.full_name,
+      position: r.engineer?.position ?? eng.position,
+      engineerCode: eng.engineer_id,
+      prefix: r.prefix,
+      issuedAt: new Date().toISOString(),
+      expiresAt: r.expires_at,
+    });
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", `Credencial QR de ${r.engineer?.full_name ?? eng.full_name}, prefijo ${r.prefix ?? ""}`);
+    issued = { canvas, qrText: r.qr_text };
+    $("qr-preview").replaceChildren(canvas);
+    $("qr-dlg").showModal();
+    toast("Credencial QR emitida", "ok");
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) toast(err.message ?? String(err), "error");
+  } finally {
+    btn.disabled = false;
+    await loadQr();
+  }
+});
+
+function forgetIssued() {
+  // El texto completo no se conserva en la página después de cerrar el diálogo.
+  issued = null;
+  $("qr-preview").replaceChildren();
+  $("cred-print").replaceChildren();
+}
+$("qr-close").addEventListener("click", () => $("qr-dlg").close());
+$("qr-dlg").addEventListener("close", forgetIssued);
+$("qr-dlg").addEventListener("cancel", (ev) => {
+  if (!confirm("El código no se podrá volver a ver. ¿Cerrar de todos modos?")) ev.preventDefault();
+});
+
+$("qr-png").addEventListener("click", async () => {
+  if (!issued) return;
+  try {
+    const url = URL.createObjectURL(await credentialBlob(issued.canvas));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `credencial-qr-${eng.engineer_id}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (err) { toast(err.message, "error"); }
+});
+
+$("qr-print").addEventListener("click", () => {
+  if (!issued) return;
+  const img = new Image();
+  img.alt = "Credencial QR";
+  img.src = issued.canvas.toDataURL("image/png");
+  $("cred-print").replaceChildren(img);
+  document.body.classList.add("print-credential");
+  const done = () => {
+    document.body.classList.remove("print-credential");
+    $("cred-print").replaceChildren();
+  };
+  window.addEventListener("afterprint", done, { once: true });
+  img.decode().catch(() => {}).finally(() => window.print());
+});
+
+$("qr-copy").addEventListener("click", async () => {
+  if (!issued) return;
+  try {
+    await navigator.clipboard.writeText(issued.qrText);
+    toast("Texto del QR copiado: pégalo en la entrada manual del lector QR", "ok");
+  } catch {
+    toast("El navegador no permite copiar (requiere HTTPS o localhost)", "error");
+  }
+});
+
+$("qr-revoke").addEventListener("click", async () => {
+  if (!confirm(`¿Revocar la credencial QR de ${eng.engineer_id} (prefijo ${qr?.prefix ?? "?"})? `
+    + "Dejará de abrir la entrada principal de inmediato.")) return;
+  try {
+    await api.del(`/engineers/${id}/qr`);
+    toast("Credencial QR revocada", "ok");
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) toast(err.message, "error");
+  }
+  await loadQr();
 });

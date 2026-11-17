@@ -36,6 +36,11 @@ WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 | GET · POST · DELETE | `/engineers/{pk}/face` | Perfil biométrico · registrar muestras (multipart `images`, 3–5) · borrar todas |
 | DELETE | `/engineers/{pk}/face/{sample_id}` | Borrar una muestra |
 | POST | `/vision/quality` | Multipart `image`: indica si hay un único rostro, nitidez, iluminación y tamaño |
+| POST | `/engineers/{pk}/qr` | Emite la credencial QR de la entrada principal (solo `admin`). Cuerpo opcional `{expires_at}`. `201 {qr_text, prefix, expires_at, engineer:{id, full_name, position}}`. El `qr_text` (`DCG-QR1:<token>`) se devuelve **una sola vez**; solo se guarda su SHA-256. Revoca el QR anterior. `409 ENGINEER_NOT_ACTIVE` si el ingeniero no está `ACTIVO` |
+| GET | `/engineers/{pk}/qr` | `{active, prefix, created_at, expires_at, last_used_at}`, nunca el token (solo `admin`) |
+| DELETE | `/engineers/{pk}/qr` | `204`: revoca el QR activo · `404 QR_NOT_FOUND` si no hay ninguno. Borrar los datos del ingeniero también lo revoca |
+
+El QR **identifica, no autoriza**: cada escaneo exige además una solicitud `APROBADA` vigente (Registro 2).
 
 ## Tarjetas, áreas y dispositivos
 
@@ -43,7 +48,7 @@ WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 |---|---|---|
 | GET · POST | `/cards` | Listar (`status`, `engineer_id`, `unassigned`, `q`) · registrar `{uid, label?, engineer_id?}` |
 | POST | `/cards/{id}/assign` · `/status` · `/unlock` | Vincular o desvincular · `ACTIVA/BLOQUEADA/PERDIDA/BAJA` · quitar el bloqueo por intentos fallidos |
-| GET · POST · PATCH · DELETE | `/areas`, `/areas/{id}` | Catálogo de áreas |
+| GET · POST · PATCH · DELETE | `/areas`, `/areas/{id}` | Catálogo de áreas (código: letras, dígitos, `-` y `_`, p. ej. `ENTRADA_PRINCIPAL`, `SALA_SERVIDORES`) |
 | GET · POST · PATCH | `/devices`, `/devices/{id}` | `POST` devuelve el **secreto HMAC una sola vez** |
 | POST | `/devices/{id}/rotate-secret` | Nuevo secreto (el anterior deja de valer al instante) |
 | GET | `/devices/status/all` | Estado del hardware: `status`, último latido, puerta, distancia, sensores RC522 y HC-SR04, RSSI |
@@ -61,12 +66,44 @@ WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 
 | Método | Ruta | Descripción |
 |---|---|---|
+| GET | `/access-log` | **Bitácora** de todas las zonas y métodos (ver abajo). Filtros `method`, `result`, `zone`, `engineer_id`, `since`, `until` |
 | GET | `/access-sessions` | Intentos de acceso (`state`, `direction`, `device_id`, `engineer_id`, `reason_code`, `since`) |
 | GET | `/access-sessions/{id}` | Detalle: estado, motivo en español, `face_score`, distancias, marcas de tiempo |
 | GET | `/alerts` · POST `/alerts/{id}/ack` | Alertas (`unacknowledged`, `severity`, `type`) · marcar como atendida |
 | GET | `/stats/dashboard` | Ingenieros (por estado y quién está dentro), solicitudes, accesos, salidas y denegaciones en 24 h, denegaciones por motivo, alertas abiertas, dispositivos, últimos intentos |
 | GET | `/audit` · `/audit/verify` | Auditoría encadenada con HMAC · verificación de la cadena |
 | GET | `/system/kiosk-token` | Token del kiosco (solo `admin`) |
+| GET | `/monitoring/environment/latest` | Última lectura del DHT11: `{device_code, area, temperature_c, humidity_pct, sensor, fan, alarm, conditions, at, thresholds:{temp_high_c, temp_critical_c, humidity_low_pct, humidity_high_pct, fan_off_below_c}}`. `?device_code=` opcional |
+| GET | `/monitoring/environment?minutes=60` | `{minutes, items:[{at, temperature_c, humidity_pct}]}`, del más antiguo al más reciente. `minutes` 1–10080; como máximo 1440 puntos (se submuestrea) |
+
+### Bitácora (`GET /access-log`)
+
+Paginada (`{items, total, limit, offset}`), de la más reciente a la más antigua. Reúne los intentos **decididos**
+de la sala (`access_sessions`; los que aún esperan rostro no aparecen) y los escaneos QR de la entrada principal
+(`entrance_events`). Cada fila:
+
+```json
+{
+  "id": "9f1c…(32 hex)",
+  "source": "entrance_event",
+  "at": "2026-11-17T14:02:11.120000+00:00",
+  "person": "Laura Méndez Ríos",
+  "engineer_id": "ENG-0001",
+  "position": "Administrador de TI",
+  "zone": {"code": "ENTRADA_PRINCIPAL", "name": "Entrada principal / recepción"},
+  "method": "QR",
+  "direction": "ENTRADA",
+  "result": "GRANTED",
+  "reason_code": null,
+  "reason": null,
+  "device_code": "DC-DOOR-01"
+}
+```
+
+- `source`: `access_session` (tarjeta + rostro o botón de salida) o `entrance_event` (QR).
+- `method`: `QR`, `RFID+ROSTRO` o `BOTON_SALIDA` (botón de salida interior, sin tarjeta ni rostro).
+- `result`: `GRANTED` (concedido, abierto o cerrado) o `DENIED` (denegado o tiempo agotado), con `reason_code` y `reason`.
+- `person`, `engineer_id` y `position` valen `null` si no se sabe quién era (QR desconocido, tarjeta no registrada).
 
 ### Kiosco facial
 
@@ -78,11 +115,49 @@ WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 `retry=true` (rostro no detectado, varios rostros o número de capturas incorrecto) mantiene la sesión
 en `AWAITING_FACE` para que el kiosco reintente. `FACE_MISMATCH` y `LIVENESS_FAILED` deniegan la sesión.
 
+### Entrada principal: escaneo QR (kiosco de recepción)
+
+`POST /kiosk/entrance/scan` con `{qr_text}` (máx. 512 caracteres). Misma autenticación que `/kiosk/*`
+(`X-Kiosk-Token` o sesión `admin`; un auditor recibe `403`). Respuesta 200:
+
+```json
+{"result": "GRANTED", "display_name": "Laura Méndez Ríos", "position": "Administrador de TI",
+ "area": "ENTRADA_PRINCIPAL", "event_id": "9f1c…"}
+{"result": "DENIED", "reason_code": "NO_VALID_AUTH", "reason": "No existe ninguna autorización…",
+ "area": "ENTRADA_PRINCIPAL", "event_id": "…"}
+```
+
+Comprobaciones en este orden (la primera que falla deniega): `QR_INVALID` (formato distinto de `DCG-QR1:<32 car.>`),
+`QR_UNKNOWN`, `QR_REVOKED`, `QR_EXPIRED`, `ENGINEER_INACTIVE`, Registro 2 (los mismos códigos que la puerta:
+`NO_VALID_AUTH`, `REQUEST_PENDING`, `AUTH_NOT_STARTED`, `AUTH_EXPIRED`, `AUTH_REVOKED`, `AUTH_REJECTED`) y
+`DEVICE_OFFLINE` (el dispositivo `DCG_ENTRANCE_DEVICE_CODE` no está `ONLINE` o lleva más de `DCG_DEVICE_OFFLINE_S`
+sin latido). Para Registro 2 vale una solicitud vigente para **cualquier área** del centro: todas están detrás de la
+entrada principal. `display_name` y `position` solo se devuelven si se concede.
+
+Cada escaneo queda en la bitácora (`method: "QR"`), en la auditoría (`entrance.qr_granted` / `entrance.qr_denied`),
+se emite por WebSocket (`entrance.scan`) y encola una señal para el LED de la entrada. Más de
+`DCG_QR_SCAN_RATE_PER_MINUTE` (20) escaneos por minuto y cliente → `429 RATE_LIMITED` (no se registra).
+
 ### Dispositivo (ESP32, HMAC)
 
 `POST /device/heartbeat`, `POST /device/presence`, `POST /device/access/start`,
 `GET /device/access/{sid}?distance_cm=`, `POST /device/access/{sid}/opened`, `POST /device/access/{sid}/closed`
 y `POST /device/event`. Contrato completo y firma de las respuestas en [protocolo-esp32.md](protocolo-esp32.md).
+
+- `POST /device/exit-button`: botón de salida interior. Abre solo si hay alguien dentro de esa puerta (`NOBODY_INSIDE` en caso contrario), sin presencia, tarjeta ni rostro.
+- `POST /device/presence` responde `{ok, alarm, alarm_s}`. `alarm:true` significa intrusión: el sensor interior detecta a alguien y no hay nadie autorizado dentro. Alerta `INTRUSION` CRITICAL.
+- El poll con `GRANTED` añade `greeting` («Bienvenido» o «Hasta pronto») y `display_name` (nombre en ASCII) para el LCD.
+- `POST /device/entrance/poll` (`{}`): `{signal: null}` o `{signal: {id, result: "GRANTED"|"DENIED", led_ms, display_name}}`.
+  Cada señal se entrega **una sola vez**; si no se recoge en `DCG_ENTRANCE_SIGNAL_TTL_S` (10 s) queda `EXPIRADA`.
+  `display_name` (ASCII, ≤ 40) solo va relleno en `GRANTED`. El LED verde es independiente del servo de la sala.
+- `POST /device/entrance/{id}/ack` (`{shown: true}`): `{ok: true}`. Idempotente. `404 SIGNAL_NOT_FOUND` (otra puerta o
+  id desconocido), `409 SIGNAL_NOT_DELIVERED` (pendiente o expirada).
+- `POST /device/environment` (`{temperature_c, humidity_pct, sensor: "OK"|"ERROR"}`, cada 10 s): `{ok, fan, alarm}`.
+  Ventilador desde `DCG_TEMP_HIGH_C` (27) hasta bajar de ese valor − 1 °C; alarma desde `DCG_TEMP_CRITICAL_C` (32) o con
+  humedad fuera de [`DCG_HUMIDITY_LOW_PCT`, `DCG_HUMIDITY_HIGH_PCT`] (20–80 %). `sensor: "OK"` sin ambos valores cuenta
+  como `ERROR`; con el sensor en error, `fan` y `alarm` son `false`.
+- `heartbeat.config` incluye `temp_high_c`, `temp_critical_c`, `humidity_low_pct` y `humidity_high_pct`; `heartbeat.sensors`
+  acepta `dht` (se muestra en `/devices/status/all`; su fallo se alerta como `SENSOR_DHT_ERROR`, no `SENSOR_FAULT`).
 
 ### Simulación (solo con `DCG_SIMULATION=true`, rol `admin`)
 
@@ -92,6 +167,10 @@ y `POST /device/event`. Contrato completo y firma de las respuestas en [protocol
 | POST | `/sim/{device}/distance` · `/sensors` · `/online` · `/heartbeat` | Mover a la persona, simular un fallo del HC-SR04, desconectar el ESP32, enviar un latido |
 | POST | `/sim/{device}/card` · `/face` · `/poll` · `/close` | Pasar tarjeta, enviar rostro sintético (`match`, `other` o `stranger`), sondear la decisión, cerrar el servo |
 | POST | `/sim/enroll-demo-faces` | Registra un rostro sintético a cada ingeniero activo sin rostro |
+| POST | `/sim/{device}/environment` | Lectura del DHT11 virtual `{temperature_c, humidity_pct, sensor}`; el ESP32 virtual aplica `fan`/`alarm` |
+| POST | `/sim/{device}/entrance-poll` | Un poll de la señal de la entrada: enciende el LED virtual (`GREEN` / `RED_BLINK`) y confirma |
+
+`GET /sim/state` incluye por dispositivo `entrance_led`, `fan`, `env_alarm` y `last_env`.
 
 El ESP32 virtual envía **peticiones HTTP firmadas reales** al propio gateway (`DCG_SIM_BASE_URL`).
 
@@ -106,6 +185,8 @@ Formato: `{"type", "ts", "data"}`. Los eventos se publican **después del commit
 | `alert.created` · `alert.acknowledged` | Alerta |
 | `device.status` · `device.presence` | Estado de hardware · cambio de presencia |
 | `request.updated` | `{id, use_count}` al consumir una autorización |
+| `entrance.scan` | Fila de bitácora del escaneo QR (igual que `GET /access-log`) |
+| `environment` | Lectura del DHT11: `{device_code, area, temperature_c, humidity_pct, sensor, fan, alarm, conditions, at}` |
 
 ## Códigos de denegación (`reason_code`)
 
@@ -124,14 +205,22 @@ Formato: `{"type", "ts", "data"}`. Los eventos se publican **después del commit
 | `DEVICE_DISABLED` | Puerta deshabilitada | `DEVICE_DISABLED` WARN |
 | `TIMEOUT` | Sin rostro dentro de `DCG_ACCESS_SESSION_TIMEOUT_S` (30 s) | — |
 | `SESSION_SUPERSEDED` | Otra tarjeta en la misma puerta cancela el intento anterior | — |
+| `NOBODY_INSIDE` | Botón de salida pulsado sin nadie dentro | — |
+| `QR_INVALID` · `QR_UNKNOWN` | QR con formato inválido · no registrado (entrada principal) | `UNKNOWN_QR` WARN (deduplicada 60 s) |
+| `QR_REVOKED` · `QR_EXPIRED` | QR revocado · vencido | `QR_BLOCKED` WARN |
+| `DEVICE_OFFLINE` | El dispositivo de la entrada no está en línea | — (ya existe `DEVICE_OFFLINE`) |
 
 Otras alertas:
+- `INTRUSION` (CRITICAL): el sensor interior detecta a alguien y no hay nadie autorizado dentro; zumbador y LED rojo durante 20 s.
 - `REPEATED_FAILURES` (CRITICAL): 3 fallos en 5 min con la misma tarjeta la bloquean 10 min.
 - `DEVICE_AUTH_FAIL` (CRITICAL): firma, nonce o timestamp inválidos.
 - `DEVICE_OFFLINE` (WARN): sin latido durante más de 45 s.
 - `SENSOR_FAULT` (WARN).
 - `DEVICE_EVENT`.
 - `EMERGENCY_CLOSE`.
+- Ambiente (DHT11), una sola vez mientras dure la condición y de nuevo cuando reaparece. El mensaje indica sensor, zona,
+  fecha, valor y acción: `TEMPERATURA_ALTA` (WARN), `TEMPERATURA_CRITICA` (CRITICAL), `HUMEDAD_FUERA_DE_RANGO` (WARN) y
+  `SENSOR_DHT_ERROR` (WARN).
 
 ## Frontend (contrato del shell)
 

@@ -81,6 +81,23 @@ export const REASON_TEXT = {
   DEVICE_DISABLED: "Dispositivo deshabilitado por un administrador",
   TIMEOUT: "Tiempo de verificación agotado",
   SESSION_SUPERSEDED: "Se inició otro intento en la misma puerta",
+  NOBODY_INSIDE: "Botón de salida pulsado sin nadie dentro: la puerta no se abre",
+  // Entrada principal (credencial QR), ver docs/contrato-qr-dht11.md §2.
+  QR_INVALID: "El código QR no es una credencial válida de Telecom Conecta",
+  QR_UNKNOWN: "Credencial QR no registrada en el sistema",
+  QR_REVOKED: "La credencial QR fue revocada",
+  QR_EXPIRED: "La credencial QR ha vencido",
+  DEVICE_OFFLINE: "El dispositivo de la entrada está fuera de línea: la puerta permanece cerrada",
+  RATE_LIMITED: "Demasiados intentos seguidos: espere un momento",
 };
+
+// Zonas y métodos de la bitácora (contrato QR + DHT11 §0 y §6).
+export const ZONE_LABEL = {
+  ENTRADA_PRINCIPAL: "Entrada principal",
+  SALA_SERVIDORES: "Sala de servidores",
+};
+export const METHOD_LABEL = { QR: "Código QR", "RFID+ROSTRO": "RFID + rostro", BOTON_SALIDA: "Botón de salida" };
+export const zoneText = (code, name = null) => (code ? ZONE_LABEL[code] ?? name ?? code : name ?? "—");
+export const methodText = (m) => (m ? METHOD_LABEL[m] ?? m : "—");
 
 export const reasonText = (code) => (code ? REASON_TEXT[code] ?? code : "");

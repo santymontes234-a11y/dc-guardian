@@ -5,6 +5,7 @@
 #if DCG_DIAG
 
 #include <Arduino.h>
+#include <DHT.h>
 #include <ESP32Servo.h>
 #include <MFRC522.h>
 #include <SPI.h>
@@ -17,7 +18,8 @@
 static MFRC522 rfid(PIN_RFID_SS, PIN_RFID_RST);
 static Servo servo;
 static dcg::PresenceDetector presence;
-enum class Mode { IDLE, RFID, DIST, BUTTON };
+static DHT dht(PIN_DHT, DHT11);
+enum class Mode { IDLE, RFID, DIST, BUTTON, DHT };
 static Mode mode = Mode::IDLE;
 
 static float ping(bool& valid) {
@@ -33,7 +35,8 @@ static float ping(bool& valid) {
 
 static void help() {
   Serial.println(
-      "DIAG: rfid | dist | servo <0-180> | sweep | led | buzz | button | lcd | stop | info");
+      "DIAG: rfid | dist | servo <0-180> | sweep | led | buzz | button | lcd | dht | fan | "
+      "qrled | stop | info");
 }
 
 void setup() {
@@ -50,6 +53,11 @@ void setup() {
   pinMode(PIN_LED_RED, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_EMERGENCY_BTN, INPUT_PULLUP);
+  pinMode(PIN_LED_ENTRANCE, OUTPUT);
+  digitalWrite(PIN_LED_ENTRANCE, LOW);
+  pinMode(PIN_FAN, OUTPUT);
+  digitalWrite(PIN_FAN, LOW);
+  dht.begin();
   SPI.begin(PIN_RFID_SCK, PIN_RFID_MISO, PIN_RFID_MOSI, PIN_RFID_SS);
   rfid.PCD_Init();
   help();
@@ -83,7 +91,8 @@ static void command(String c) {
   c.trim();
   if (c == "rfid") { mode = Mode::RFID; Serial.println("Acerca tarjetas (stop para salir)"); }
   else if (c == "dist") { mode = Mode::DIST; Serial.println("raw_cm  median_cm  present"); }
-  else if (c == "button") { mode = Mode::BUTTON; Serial.println("Pulsa el botón de emergencia"); }
+  else if (c == "dht") { mode = Mode::DHT; Serial.println("temp_C  hum_%  (cada 2 s)"); }
+  else if (c == "button") { mode = Mode::BUTTON; Serial.println("Pulsa el botón de salida (interior)"); }
   else if (c == "stop") mode = Mode::IDLE;
   else if (c == "info") info();
   else if (c == "lcd") lcdTest();
@@ -100,6 +109,12 @@ static void command(String c) {
     digitalWrite(PIN_LED_GREEN, HIGH); delay(500); digitalWrite(PIN_LED_GREEN, LOW);
     digitalWrite(PIN_LED_RED, HIGH); delay(500); digitalWrite(PIN_LED_RED, LOW);
     Serial.println("verde, rojo");
+  } else if (c == "fan") {
+    digitalWrite(PIN_FAN, HIGH); delay(2000); digitalWrite(PIN_FAN, LOW);
+    Serial.println("ventilador (GPIO 2) 2 s");
+  } else if (c == "qrled") {
+    digitalWrite(PIN_LED_ENTRANCE, HIGH); delay(1000); digitalWrite(PIN_LED_ENTRANCE, LOW);
+    Serial.println("LED entrada principal (GPIO 14) 1 s");
   } else if (c == "buzz") {
     digitalWrite(PIN_BUZZER, HIGH); delay(200); digitalWrite(PIN_BUZZER, LOW);
   } else help();
@@ -135,6 +150,16 @@ void loop() {
       static int last = HIGH;
       int b = digitalRead(PIN_EMERGENCY_BTN);
       if (b != last) { Serial.println(b == LOW ? "PULSADO" : "suelto"); last = b; delay(30); }
+      break;
+    }
+    case Mode::DHT: {
+      static uint32_t last = 0;
+      if (millis() - last < 2000) break;
+      last = millis();
+      const bool ok = dht.read(true);
+      const float t = dht.readTemperature(), h = dht.readHumidity();
+      if (!ok || isnan(t) || isnan(h)) Serial.println("FALLO DHT11 (cableado / pull-up 10k / VCC)");
+      else Serial.printf("%6.1f  %5.1f\n", t, h);
       break;
     }
     case Mode::IDLE: break;

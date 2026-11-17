@@ -72,3 +72,23 @@ class ActorType(StrEnum):
     DEVICE = "device"
     SYSTEM = "system"
     ENGINEER = "engineer"
+
+
+class QrStatus(StrEnum):
+    ACTIVE = "ACTIVA"
+    REVOKED = "REVOCADA"
+
+
+class EntranceSignalStatus(StrEnum):
+    """Life cycle of the one-shot signal for the main-entrance LED (contract §3)."""
+
+    PENDING = "PENDIENTE"  # queued, not yet polled by the device
+    DELIVERED = "ENTREGADA"  # returned once by /device/entrance/poll
+    SHOWN = "MOSTRADA"  # the device acknowledged it
+    EXPIRED = "EXPIRADA"  # not delivered within DCG_ENTRANCE_SIGNAL_TTL_S
+    NONE = "SIN_SENAL"  # no entrance device configured: nothing was queued
+
+
+class SensorReading(StrEnum):
+    OK = "OK"
+    ERROR = "ERROR"

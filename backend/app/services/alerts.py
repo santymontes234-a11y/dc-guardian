@@ -33,6 +33,15 @@ ALERT_TYPES: dict[str, AlertSeverity] = {
     "PRESENCE_LOST": SEV.INFO,
     "DEVICE_EVENT": SEV.WARN,
     "EMERGENCY_CLOSE": SEV.WARN,
+    "INTRUSION": SEV.CRITICAL,
+    # Main entrance (QR)
+    "UNKNOWN_QR": SEV.WARN,
+    "QR_BLOCKED": SEV.WARN,
+    # Server-room environment (DHT11)
+    "TEMPERATURA_ALTA": SEV.WARN,
+    "TEMPERATURA_CRITICA": SEV.CRITICAL,
+    "HUMEDAD_FUERA_DE_RANGO": SEV.WARN,
+    "SENSOR_DHT_ERROR": SEV.WARN,
 }
 
 

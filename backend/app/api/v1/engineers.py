@@ -2,10 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import AdminCtx, AdminOrAuditor, DbSession, ReadDb
+from app.api.deps import AdminCtx, AdminOnly, AdminOrAuditor, DbSession, ReadDb
 from app.api.v1.uploads import read_images
 from app.models.enums import EngineerStatus
 from app.schemas.common import Page, PageParams, PathId, page_params
@@ -21,7 +21,9 @@ from app.schemas.engineers import (
     NextIdOut,
     StatusChangeResult,
 )
+from app.schemas.entrance import QrIssued, QrIssueIn, QrStatusOut
 from app.services import biometrics
+from app.services import qr as qr_service
 from app.services import engineers as svc
 
 router = APIRouter(prefix="/engineers", tags=["engineers (Registro 1)"])
@@ -121,3 +123,25 @@ def delete_face_profile(engineer_pk: PathId, ctx: AdminCtx, db: DbSession):
 @router.delete("/{engineer_pk}/face/{sample_id}", response_model=EngineerOut)
 def delete_face_sample(engineer_pk: PathId, sample_id: PathId, ctx: AdminCtx, db: DbSession):
     return biometrics.delete_sample(db, ctx, engineer_pk, sample_id)
+
+
+# ------------------------------------------------------------------ QR credential (main entrance)
+@router.post("/{engineer_pk}/qr", response_model=QrIssued, status_code=201)
+def issue_qr(engineer_pk: PathId, ctx: AdminCtx, db: DbSession, body: QrIssueIn | None = None):
+    """Issues the engineer's QR for the main entrance and revokes the previous one. The QR text
+    is returned **only now** (only its SHA-256 is stored). The QR identifies; it does not
+    authorize: each scan also requires an approved authorization in force (Registro 2)."""
+    return qr_service.issue(db, ctx, engineer_pk, body.expires_at if body else None)
+
+
+@router.get("/{engineer_pk}/qr", response_model=QrStatusOut)
+def get_qr(engineer_pk: PathId, _: AdminOnly, db: ReadDb):
+    """Whether the engineer has an active QR (prefix and dates; never the token)."""
+    return qr_service.status(db, engineer_pk)
+
+
+@router.delete("/{engineer_pk}/qr", status_code=204, response_class=Response)
+def revoke_qr(engineer_pk: PathId, ctx: AdminCtx, db: DbSession):
+    """Revokes the active QR (``404 QR_NOT_FOUND`` if there is none)."""
+    qr_service.revoke(db, ctx, engineer_pk)
+    return Response(status_code=204)

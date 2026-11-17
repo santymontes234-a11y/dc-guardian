@@ -6,7 +6,10 @@
 // Security invariants (each one has a unit test in test/test_controller):
 //  * The door only opens on a GRANTED decision that (a) arrived on a signed response,
 //    (b) names the session this device started, (c) carries a valid open_ms, and
-//    (d) arrives while a person is still present and the door is CLOSED.
+//    (d) arrives while the door is CLOSED.
+//  * The HC-SR04 is INSIDE the room and is an intrusion detector, not an access factor:
+//    someone detected inside ⇒ the backend decides whether nobody authorized is inside
+//    (⇒ alarm). Offline, it cannot know ⇒ local alarm (fail-secure).
 //  * The UID never authorizes anything locally; it is only forwarded to the backend.
 //  * Any error, timeout or disconnection aborts the session ⇒ door stays closed.
 //  * Remote commands are whitelisted (EMERGENCY_CLOSE only).
@@ -32,6 +35,27 @@ struct SensorSnapshot {
   bool fault = false;
 };
 
+// One DHT11 read attempt (every 2 s). ok=false: checksum/timeout/NaN.
+struct DhtSample {
+  bool ok = false;
+  float temperatureC = 0;
+  float humidityPct = 0;
+};
+
+enum class DhtStatus { UNKNOWN, OK, ERROR };  // UNKNOWN: no read finished yet
+const char* dhtStatusName(DhtStatus s);
+
+// What the environment logic decided; the HAL drives the fan, the buzzer and the LCD from it.
+struct EnvStatus {
+  DhtStatus sensor = DhtStatus::UNKNOWN;
+  float temperatureC = 0;   // last valid reading (meaningful when sensor == OK)
+  float humidityPct = 0;
+  bool fan = false;
+  bool alarm = false;       // environmental alarm (buzzer pattern distinct from intrusion)
+  bool fallback = true;     // true: decided locally (backend unreachable / bad signature)
+  EnvThresholds thresholds;
+};
+
 // Hardware the controller drives. Implemented with FreeRTOS + drivers on the ESP32 and
 // with fakes in the native tests.
 class DeviceHal {
@@ -55,6 +79,19 @@ class DeviceHal {
   virtual void onStateChange(SystemState) {}
   virtual void onCardDetected(const std::string& /*uidHex*/) {}
   virtual void onSessionPhase(const std::string& /*backendState*/) {}
+  virtual void onGranted(const std::string& /*greeting*/, const std::string& /*name*/) {}
+  // Intrusion alarm: red LED blinking + buzzer for `ms` (never touches the door).
+  virtual void alarm(uint32_t /*ms*/) {}
+  // DHT11: next finished read since the last call (false = none). Default: no sensor.
+  virtual bool takeDhtSample(DhtSample& /*out*/) { return false; }
+  // Environment decision changed or refreshed: fan output, env alarm pattern, LCD.
+  virtual void onEnvironment(const EnvStatus& /*s*/) {}
+  // Main entrance (QR) signal: GRANTED ⇒ entrance green LED for ledMs + LCD 3 s;
+  // DENIED ⇒ red LED blinks 3 times + short beep + LCD. NEVER touches the servo.
+  virtual void onEntranceSignal(bool /*granted*/, uint32_t /*ledMs*/, const std::string& /*name*/) {}
+  // Emergency close (remote EMERGENCY_CLOSE, console `close`, or going OFFLINE): the main
+  // entrance green LED goes off at once and the signal being shown is dropped (LCD included).
+  virtual void cancelEntrance() {}
 };
 
 struct ControllerTiming {
@@ -66,6 +103,8 @@ struct ControllerTiming {
   uint32_t cardDebounceMs = 3000;        // same UID ignored for this long
   uint32_t confirmRetryMs = 2000;
   uint8_t confirmMaxAttempts = 5;
+  uint32_t localAlarmMs = 20000;       // offline intrusion alarm
+  uint32_t alarmBootGraceMs = 20000;   // no local alarm right after boot (not yet online)
 };
 
 class AccessController {
@@ -75,8 +114,15 @@ class AccessController {
 
   void tick();
 
-  // Local (physical button / serial) emergency close. Never opens anything.
+  // Serial "close" command: emergency close. Never opens anything.
   void localEmergencyClose();
+
+  // Inside exit button: asks the backend, which opens only if someone is inside this door.
+  // Ignored while offline (cannot be verified ⇒ stays closed) or during another attempt.
+  void requestExitByButton();
+
+  // DHT11 health reported in heartbeat.sensors.dht (set by the environment logic).
+  void setDhtOk(bool ok) { dhtOk_ = ok; }
 
   SystemState state() const { return state_; }
   bool online() const { return online_; }
@@ -89,11 +135,13 @@ class AccessController {
   void handleHeartbeat(uint32_t now, bool force);
   void handlePresence(const SensorSnapshot& s);
   void handleCard(uint32_t now, const SensorSnapshot& s);
+  void beginSession(uint32_t now, const StartReply& r, bool byButton);
   void handleWaiting(uint32_t now, const SensorSnapshot& s);
   void handleConfirmations(uint32_t now);
   void abortSession(const char* why, Feedback f);
   void restingState(const SensorSnapshot& s);
   void applyConfig(const DeviceConfig& c);
+  void emergencyClose(CloseReason r);  // closes the room door AND cancels the entrance signal
 
   DeviceHal& hal_;
   Backend& backend_;
@@ -107,12 +155,16 @@ class AccessController {
   uint32_t nextHeartbeatMs_ = 0;
   uint32_t lastHeartbeatMs_ = 0;
   bool lastPresent_ = false;
+  bool booted_ = false;
+  uint32_t bootMs_ = 0;
+  bool dhtOk_ = true;
 
   std::string sessionId_;
   uint32_t sessionDeadlineMs_ = 0;
   uint32_t nextPollMs_ = 0;
   uint32_t pollMs_ = 500;
   uint32_t pollErrors_ = 0;
+  bool buttonExit_ = false;  // session started by the inside button: no outside presence needed
 
   std::string lastUid_;
   uint32_t lastUidMs_ = 0;

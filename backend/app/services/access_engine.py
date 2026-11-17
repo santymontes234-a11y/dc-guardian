@@ -75,6 +75,13 @@ REASON_TEXT: dict[str, str] = {
     "DEVICE_DISABLED": "Dispositivo deshabilitado por un administrador",
     "TIMEOUT": "Tiempo de verificación agotado",
     "SESSION_SUPERSEDED": "Se inició otro intento en la misma puerta",
+    "NOBODY_INSIDE": "Botón de salida pulsado sin nadie dentro: la puerta no se abre",
+    # Main entrance (QR, docs/contrato-qr-dht11.md §2)
+    "QR_INVALID": "El código QR no tiene un formato válido",
+    "QR_UNKNOWN": "El código QR no está registrado",
+    "QR_REVOKED": "El código QR fue revocado",
+    "QR_EXPIRED": "El código QR ha vencido",
+    "DEVICE_OFFLINE": "El dispositivo de la entrada no está en línea",
 }
 
 # reason → (alert type, severity override). Missing → no alert.
@@ -107,6 +114,11 @@ _COUNTS_AS_FAILURE = frozenset({
 
 # Biometric results that let the person try again within the same session.
 RETRYABLE_FACE = frozenset({"FACE_NOT_DETECTED", "MULTIPLE_FACES", "NO_FRAMES", "BAD_FRAME_COUNT"})
+
+
+def denial_alert(reason: str) -> tuple[str, AlertSeverity | None] | None:
+    """(alert type, severity override) raised for a denial reason, or None."""
+    return _ALERT_FOR.get(reason)
 
 
 def reason_text(code: str | None) -> str | None:
@@ -156,11 +168,23 @@ def _present(dev: Device, d: float | None) -> bool:
 
 def _explain_no_auth(db: Session, card_id: int, area_id: int, now) -> str:
     """Why ``find_in_force`` returned nothing — for the reason shown to the user. Never grants."""
-    reqs = db.execute(
-        select(AuthorizationRequest).where(
-            AuthorizationRequest.card_id == card_id, AuthorizationRequest.area_id == area_id
-        ).order_by(AuthorizationRequest.created_at.desc()).limit(20)
-    ).scalars().all()
+    return explain_no_auth(db, now, card_id=card_id, area_ids=[area_id])
+
+
+def explain_no_auth(db: Session, now, *, card_id: int | None = None, engineer_id: int | None = None,
+                    area_ids: list[int] | None = None) -> str:
+    """Reason code for "no authorization in force", by card (RFID door) or by engineer (QR).
+    ``area_ids=None`` = any area. Never grants."""
+    stmt = select(AuthorizationRequest)
+    if card_id is not None:
+        stmt = stmt.where(AuthorizationRequest.card_id == card_id)
+    if engineer_id is not None:
+        stmt = stmt.where(AuthorizationRequest.engineer_id == engineer_id)
+    if card_id is None and engineer_id is None:
+        return "NO_VALID_AUTH"
+    if area_ids is not None:
+        stmt = stmt.where(AuthorizationRequest.area_id.in_(area_ids))
+    reqs = db.execute(stmt.order_by(AuthorizationRequest.created_at.desc()).limit(20)).scalars().all()
     if not reqs:
         return "NO_VALID_AUTH"
     covering = [r for r in reqs if r.start_at <= now < r.end_at]
@@ -184,6 +208,16 @@ def _explain_no_auth(db: Session, card_id: int, area_id: int, now) -> str:
     if latest.status == RequestStatus.REJECTED:
         return "AUTH_REJECTED"
     return "NO_VALID_AUTH"
+
+
+def authorization_for_engineer(db: Session, engineer_id: int, area_ids: list[int] | None, now
+                               ) -> tuple[AuthorizationRequest | None, str | None]:
+    """Registro 2 check used outside the RFID flow (QR at the main entrance): ``(request, None)``
+    if one is in force, else ``(None, reason_code)`` with the same codes as the door."""
+    req = requests_service.find_in_force_for_engineer(db, engineer_id, area_ids, now)
+    if req is not None:
+        return req, None
+    return None, explain_no_auth(db, now, engineer_id=engineer_id, area_ids=area_ids)
 
 
 def _record_failure(db: Session, ctx: ActorCtx, sess: AccessSession, card: RfidCard | None) -> None:
@@ -244,6 +278,65 @@ def _engineer_inside(db: Session, engineer_id: int, device_id: int, now) -> bool
     return last.opened_at >= now - timedelta(hours=get_settings().exit_window_hours)
 
 
+# Sentinel stored in card_uid_raw for exits requested with the inside button (never a valid
+# hex UID, so it cannot collide with a real card).
+BUTTON_UID = "EXIT_BUTTON"
+
+
+def is_button_exit(sess: AccessSession) -> bool:
+    return sess.direction == AccessDirection.EXIT and sess.card_uid_raw == BUTTON_UID
+
+
+def engineers_inside(db: Session, device_id: int, now) -> list[int]:
+    """Engineers whose last completed door cycle at this door was an ENTRADA, recently."""
+    since = now - timedelta(hours=get_settings().exit_window_hours)
+    rows = db.execute(
+        select(AccessSession).where(
+            AccessSession.device_id == device_id, AccessSession.engineer_id.is_not(None),
+            AccessSession.opened_at.is_not(None), AccessSession.opened_at >= since,
+        ).order_by(AccessSession.opened_at)
+    ).scalars().all()
+    last: dict[int, AccessSession] = {}
+    for r in rows:
+        last[r.engineer_id] = r
+    return [eng_id for eng_id, r in last.items() if r.direction == AccessDirection.ENTRY]
+
+
+def exit_button(db: Session, ctx: ActorCtx, dev: Device) -> AccessSession:
+    """Inside exit button: opens ONLY if the backend knows someone is inside this door.
+
+    No card, face or authorization (nobody may be trapped), and no presence check (the
+    HC-SR04 watches the outside). With a single person inside the exit is attributed to them;
+    with several it cannot be known who left, so it is recorded without engineer + INFO alert.
+    """
+    s = get_settings()
+    now = ctx.now
+    sess = AccessSession(
+        device_id=dev.id, card_uid_raw=BUTTON_UID, state=ST.CARD_READ, created_at=now,
+        expires_at=now + timedelta(seconds=s.access_session_timeout_s), direction=AccessDirection.EXIT,
+    )
+    db.add(sess)
+    db.flush()
+    ctx.audit(db, "access.exit_button", "access_session", sess.id, {"device": dev.device_code})
+    if dev.status == DeviceStatus.DISABLED:
+        return _deny(db, ctx, sess, "DEVICE_DISABLED")
+    inside = engineers_inside(db, dev.id, now)
+    if not inside:
+        return _deny(db, ctx, sess, "NOBODY_INSIDE")
+    if len(inside) == 1:
+        sess.engineer_id = inside[0]
+    else:
+        alerts.raise_alert(db, ctx, "DEVICE_EVENT",
+                           f"Salida por botón en {dev.device_code} con {len(inside)} personas dentro: "
+                           "no se puede saber quién salió", severity=AlertSeverity.INFO,
+                           device_id=dev.id, session_id=sess.id)
+    sess.state = ST.FACE_OK  # nothing to verify: the decision is taken on the next poll
+    ctx.audit(db, "access.exit_requested", "access_session", sess.id,
+              {"engineer_id": sess.engineer_id, "inside": len(inside), "via": "button"})
+    _emit(db, sess, "exit_requested")
+    return sess
+
+
 def _supersede_open_sessions(db: Session, ctx: ActorCtx, device_id: int, keep_id: str) -> None:
     """One door, one attempt at a time: a *valid* new card read (registered, linked card with
     presence) cancels any undecided attempt. Unknown cards never cancel someone else's."""
@@ -272,10 +365,6 @@ def start(db: Session, ctx: ActorCtx, dev: Device, uid_raw: str, distance_cm: fl
 
     if dev.status == DeviceStatus.DISABLED:
         return _deny(db, ctx, sess, "DEVICE_DISABLED")
-    if not _valid_distance(distance_cm):
-        return _deny(db, ctx, sess, "SENSOR_ERROR", extra={"distance_cm": distance_cm})
-    if not _present(dev, distance_cm):
-        return _deny(db, ctx, sess, "PRESENCE_LOST", extra={"distance_cm": distance_cm})
 
     try:
         uid = normalize_uid(uid_raw)
@@ -416,13 +505,8 @@ def poll(db: Session, ctx: ActorCtx, dev: Device, session_id: str, distance_cm: 
 
     if dev.status == DeviceStatus.DISABLED:
         return _deny(db, ctx, sess, "DEVICE_DISABLED")
-    if not _valid_distance(distance_cm):
-        # A single bad reading while waiting is tolerated; at decision time it is fatal.
-        if sess.state == ST.AWAITING_FACE:
-            return sess
-        return _deny(db, ctx, sess, "SENSOR_ERROR", extra={"distance_cm": distance_cm})
-    if not _present(dev, distance_cm):
-        return _deny(db, ctx, sess, "PRESENCE_LOST", extra={"distance_cm": distance_cm})
+    if is_button_exit(sess) and sess.state == ST.FACE_OK:
+        return _grant(db, ctx, dev, sess, None)
 
     card = db.get(RfidCard, sess.card_id) if sess.card_id else None
     if sess.direction == AccessDirection.EXIT and sess.state == ST.FACE_OK:
@@ -456,6 +540,20 @@ def _grant(db: Session, ctx: ActorCtx, dev: Device, sess: AccessSession, req: Au
     ctx.audit(db, "access.granted", "access_session", sess.id, details)
     _emit(db, sess, "granted")
     return sess
+
+
+def lcd_greeting(db: Session, sess: AccessSession) -> tuple[str, str]:
+    """(greeting, name) for the door LCD, plain ASCII (HD44780 has no accents)."""
+    greeting = "Hasta pronto" if sess.direction == AccessDirection.EXIT else "Bienvenido"
+    eng = db.get(Engineer, sess.engineer_id) if sess.engineer_id else None
+    return greeting, ascii_text(eng.full_name, 40) if eng else ""
+
+
+def ascii_text(text: str, max_len: int) -> str:
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return "".join(ch for ch in plain if 32 <= ord(ch) < 127).strip()[:max_len]
 
 
 # ------------------------------------------------------------------ device: actuation
@@ -518,7 +616,14 @@ def device_status_dict(dev: Device) -> dict:
     }
 
 
-_SENSOR_OK = {"rfid": "OK", "ultrasonic": "OK"}
+_SENSOR_OK = {"rfid": "OK", "ultrasonic": "OK", "dht": "OK"}
+# The DHT11 has its own alert (SENSOR_DHT_ERROR, raised by services.environment), not SENSOR_FAULT.
+_SENSOR_FAULT_ALERTS = frozenset({"rfid", "ultrasonic"})
+
+
+def _num(x: float) -> int | float:
+    """27.0 → 27 (compact JSON for the firmware); keeps real decimals."""
+    return int(x) if float(x).is_integer() else float(x)
 
 
 def heartbeat(db: Session, ctx: ActorCtx, dev: Device, body: dict) -> dict:
@@ -536,6 +641,8 @@ def heartbeat(db: Session, ctx: ActorCtx, dev: Device, body: dict) -> dict:
         dev.firmware_version = str(body["fw"])[:20]
     prev_sensors = prev.get("sensors") or {}
     for name, value in sensors.items():
+        if name not in _SENSOR_FAULT_ALERTS:
+            continue
         if value != "OK" and prev_sensors.get(name) != value:
             alerts.raise_alert(db, ctx, "SENSOR_FAULT",
                                f"{dev.device_code}: sensor {name} sin respuesta ({value})", device_id=dev.id)
@@ -550,19 +657,50 @@ def heartbeat(db: Session, ctx: ActorCtx, dev: Device, body: dict) -> dict:
     return {
         "server_time": int(ctx.now.timestamp()),
         "config": {"presence_threshold_cm": dev.presence_threshold_cm, "door_open_ms": dev.door_open_ms,
-                   "heartbeat_s": s.device_heartbeat_s},
+                   "heartbeat_s": s.device_heartbeat_s,
+                   # DHT11 thresholds (contract §4); the firmware applies them only if in range.
+                   "temp_high_c": _num(s.temp_high_c), "temp_critical_c": _num(s.temp_critical_c),
+                   "humidity_low_pct": _num(s.humidity_low_pct), "humidity_high_pct": _num(s.humidity_high_pct)},
         "command": command,
     }
 
 
-def presence(db: Session, ctx: ActorCtx, dev: Device, present: bool, distance_cm: float | None) -> None:
-    """Step 8: HC-SR04 crossed the configured threshold (informational; decisions re-check it)."""
+def _door_in_use(db: Session, dev: Device, now) -> bool:
+    """Someone is crossing the door right now (entering or leaving passes in front of the
+    inside sensor): a grant being executed or a door cycle that ended moments ago."""
+    grace = timedelta(seconds=get_settings().intrusion_door_grace_s)
+    return db.execute(
+        select(AccessSession.id).where(
+            AccessSession.device_id == dev.id,
+            (AccessSession.state.in_((ST.GRANTED, ST.OPENED)))
+            | (AccessSession.closed_at >= now - grace)
+            | ((AccessSession.state == ST.TIMEOUT) & (AccessSession.decided_at >= now - grace)),
+        ).limit(1)
+    ).first() is not None
+
+
+def presence(db: Session, ctx: ActorCtx, dev: Device, present: bool, distance_cm: float | None) -> dict:
+    """The HC-SR04 is INSIDE the room: someone detected while nobody authorized is inside (and
+    no door cycle is happening) is an intrusion ⇒ CRITICAL alert and the device sounds the alarm.
+    Returns the reply for the device: ``{"ok": true, "alarm": bool, "alarm_s": int}``."""
+    s = get_settings()
     hw = json.loads(dev.hw_status_json) if dev.hw_status_json else {}
     hw.update(present=bool(present), distance_cm=distance_cm, at=ctx.now.isoformat())
     dev.hw_status_json = json.dumps(hw, default=str)
     ctx.audit(db, "device.presence", "device", dev.id, {"present": bool(present), "distance_cm": distance_cm})
     defer(db, "device.presence", {"device_id": dev.id, "device_code": dev.device_code,
                                   "present": bool(present), "distance_cm": distance_cm})
+    alarm = False
+    if present:
+        inside = engineers_inside(db, dev.id, ctx.now)
+        if not inside and not _door_in_use(db, dev, ctx.now):
+            alarm = True
+            ctx.audit(db, "device.intrusion", "device", dev.id, {"distance_cm": distance_cm})
+            alerts.raise_alert(db, ctx, "INTRUSION",
+                               f"Intrusión en {dev.device_code}: el sensor interior detecta a alguien "
+                               f"a {distance_cm} cm y no hay nadie autorizado dentro",
+                               device_id=dev.id, dedupe_s=s.intrusion_alarm_s)
+    return {"ok": True, "alarm": alarm, "alarm_s": s.intrusion_alarm_s}
 
 
 def device_event(db: Session, ctx: ActorCtx, dev: Device, type_: str, detail: str | None) -> None:

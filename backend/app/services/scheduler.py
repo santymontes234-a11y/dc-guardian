@@ -2,7 +2,8 @@
 
 - Requests sweep (``scheduler_interval_s``, 60 s): EXPIRADA / FINALIZADA.
 - Access sweep (``device_sweep_interval_s``, 10 s): session timeouts, unused grants, devices
-  without heartbeat → OFFLINE + ``DEVICE_OFFLINE`` alert, purge of old nonces.
+  without heartbeat → OFFLINE + ``DEVICE_OFFLINE`` alert, undelivered entrance signals →
+  EXPIRADA, purge of old nonces.
 - Simulation only: heartbeats of the virtual ESP32 doors (``device_heartbeat_s``).
 The access engine never relies on these loops for its decisions; they keep the state tidy.
 """
@@ -21,8 +22,9 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.db.types import utcnow
 from app.models import DeviceNonce
-from app.services import access_engine
+from app.services import access_engine, entrance
 from app.services import requests as requests_service
+from app.services.context import ActorCtx
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,7 @@ def run_access_sweep(now=None) -> dict[str, int]:
     now = now or utcnow()
     with SessionLocal() as db:
         counts = access_engine.sweep(db, now)
+        counts["entrance_signals_expired"] = entrance.expire_signals(db, ActorCtx.system(now))
         keep = timedelta(seconds=2 * get_settings().device_clock_skew_s + 60)
         purged = db.execute(delete(DeviceNonce).where(DeviceNonce.seen_at < now - keep)).rowcount
         db.commit()

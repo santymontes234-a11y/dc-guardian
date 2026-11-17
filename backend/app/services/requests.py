@@ -147,6 +147,19 @@ def find_in_force(db: Session, card_id: int, area_id: int, at: datetime) -> Auth
     ).scalar_one_or_none()
 
 
+def find_in_force_for_engineer(db: Session, engineer_id: int, area_ids: list[int] | None,
+                               at: datetime) -> AuthorizationRequest | None:
+    """Same fail-closed rule as ``find_in_force`` but keyed by engineer (QR at the main entrance,
+    where no card is read). ``area_ids=None`` = any area. The request's card must still be ACTIVA,
+    unlocked and bound to the engineer, exactly as for the RFID door."""
+    stmt = select(AuthorizationRequest).where(AuthorizationRequest.engineer_id == engineer_id)
+    if area_ids is not None:
+        stmt = stmt.where(AuthorizationRequest.area_id.in_(area_ids))
+    return db.execute(
+        in_force_clause(stmt, at).order_by(AuthorizationRequest.end_at.desc()).limit(1)
+    ).scalar_one_or_none()
+
+
 # ----------------------------------------------------------------- validation
 def _resolve_ids(db: Session, data: RequestCreate) -> tuple[int, int]:
     """Map the form identifiers (public engineer id "ENG-0001", RFID UID) to internal ids."""

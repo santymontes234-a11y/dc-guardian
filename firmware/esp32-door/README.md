@@ -1,8 +1,11 @@
 # Firmware de la puerta (ESP32) — DC Guardian
 
-ESP32 + RC522 (RFID) + HC-SR04 (presencia) + servo SG90/MG996R (cerradura).
-El dispositivo **no decide nunca el acceso**. Envía el UID de la tarjeta y la distancia al
-backend, espera una decisión `GRANTED` **firmada** y solo entonces mueve el servo.
+ESP32 + RC522 (RFID) + HC-SR04 (alarma de intrusión **dentro** de la sala) + servo SG90/MG996R
+(cerradura) + botón de salida interior + DHT11 (temperatura/humedad, ventilador) + LED de la
+entrada principal (señal del QR) + LCD 2004.
+El dispositivo **no decide nunca el acceso**. Envía el UID de la tarjeta al backend, espera una
+decisión `GRANTED` **firmada** y solo entonces mueve el servo. El HC-SR04 no es un factor de
+acceso (protocolo §9) y la entrada principal solo enciende un LED, nunca el servo (§10).
 
 - Protocolo: [`docs/protocolo-esp32.md`](../../docs/protocolo-esp32.md)
 - Cableado, tabla de pines y alimentación: [`docs/cableado.md`](../../docs/cableado.md)
@@ -23,10 +26,12 @@ firmware/esp32-door/
 │   ├── protocol.*            JSON: construcción y validación (listas blancas, rangos)
 │   ├── backend_client.*      cliente HTTP firmado (transporte inyectado)
 │   ├── access_controller.*   máquina de estados principal
+│   ├── environment.*         DHT11: salud del sensor, envío cada 10 s, ventilador y alarma (respaldo local)
+│   ├── entrance.*            señal de la entrada principal (QR): consulta cada 1 s, LED y ack
 │   └── lcd_view.*            qué muestra el LCD 2004 (máquina de estados de pantallas)
 ├── src/
 │   ├── main.cpp              arranque, watchdog, consola serie
-│   ├── hal_esp32.*           tarea FreeRTOS de E/S: servo, HC-SR04, botón, LEDs; RC522
+│   ├── hal_esp32.*           tarea FreeRTOS de E/S: servo, HC-SR04, botón, LEDs, ventilador; RC522; tarea DHT11
 │   ├── net.*                 WiFi, NTP, RNG hardware, HTTPClient
 │   ├── lcd_esp32.*           driver LCD 2004 I2C (PCF8574) en su propia tarea FreeRTOS
 │   └── diag_main.cpp         firmware de diagnóstico (pruebas individuales)
@@ -38,8 +43,12 @@ firmware/esp32-door/
 
 ```
 Sistema:  BOOT → IDLE ⇄ PRESENCE → CARD_READ → WAITING_DECISION → DOOR_OPEN → DOOR_CLOSING → IDLE
-          OFFLINE (sin WiFi, NTP o backend) / ERROR (fallo de sensor) ⇒ tarjetas ignoradas, puerta cerrada
-Puerta:   CLOSED → OPENING → OPEN → CLOSING → CLOSED   (+ cierre de emergencia desde OPENING/OPEN)
+          (PRESENCE = alguien dentro de la sala según el HC-SR04; no condiciona el acceso)
+          (botón de salida interior: CARD_READ → WAITING_DECISION por POST /device/exit-button)
+          OFFLINE (sin WiFi, NTP o backend) / ERROR (fallo del RC522 o del HC-SR04) ⇒ tarjetas ignoradas, puerta cerrada
+Puerta:   CLOSED → OPENING → OPEN → CLOSING → CLOSED   (+ cierre de emergencia remoto o por consola desde OPENING/OPEN)
+Aparte:   entrada principal (EntrancePoller, LED GPIO 14) y DHT11 (EnvController, ventilador GPIO 2),
+          independientes de la máquina de estados y de la puerta
 ```
 
 ## 2. Instalación
@@ -72,18 +81,20 @@ inválida (secreto de ejemplo, URL mal escrita, `https://` sin CA), el dispositi
 
 | Comando | Efecto |
 |---|---|
-| `status` | Estado, puerta, ángulo, distancia, umbral, RFID, WiFi, NTP, sesión |
-| `close` | Cierre de emergencia local, igual que el botón. **No existe un comando para abrir** |
+| `status` | Estado, puerta, ángulo, distancia, umbral, RFID, WiFi, NTP, sesión; segunda línea con DHT11, ventilador, alarma ambiental y LED de la entrada |
+| `close` | Cierre de emergencia local (motivo `LOCAL_BUTTON`). El pulsador del GPIO 4 **no** cierra: es el botón de salida interior (protocolo §8). **No existe un comando para abrir** |
 | `uid <HEX>` · `dist <cm>` / `dist off` | Solo en `esp32dev-bench`: simula una tarjeta o una distancia |
 
 ## 3. Seguridad (resumen)
 
 | Medida | Dónde |
 |---|---|
-| El UID **no es un secreto** (MIFARE se clona). Solo identifica la tarjeta: el backend exige además una autorización vigente (Registro 2), el rostro y la presencia | `access_controller.cpp` |
+| El UID **no es un secreto** (MIFARE se clona). Solo identifica la tarjeta: el backend exige además una autorización vigente (Registro 2) y el rostro. El HC-SR04 está dentro de la sala y no interviene | `access_controller.cpp` |
 | Peticiones firmadas con HMAC-SHA256 + timestamp + nonce aleatorio de 16 bytes | `signing.cpp`, `backend_client.cpp` |
 | **Respuestas firmadas y ligadas al nonce**: las falsificadas, reinyectadas o sin firma se rechazan | `verifyResponse` |
-| Solo se abre con un `GRANTED` válido de la **propia sesión**, con presencia local y la puerta cerrada | `handleWaiting` |
+| Solo se abre con un `GRANTED` válido de la **propia sesión**, con `open_ms` en rango y la puerta cerrada (sin requisito de presencia) | `handleWaiting` |
+| Botón de salida interior: pide permiso al backend (`/device/exit-button`), que abre solo si hay alguien dentro; sin conexión no abre | `requestExitByButton` |
+| Señal de la entrada (QR) y DHT11: respuestas sin firma o inválidas se ignoran (LED apagado; ventilador y alarma en respaldo local). Ninguno de los dos mueve el servo | `entrance.cpp`, `environment.cpp` |
 | `OpenGrant` tiene constructor privado: solo el controlador puede abrir la puerta | `door.h` |
 | Lista blanca de comandos remotos: solo `EMERGENCY_CLOSE` | `protocol.cpp` |
 | Timeouts: 3 s por HTTP, sesión `timeout_s` + 2 s, 3 errores ⇒ abortar | `ControllerTiming` |
@@ -114,7 +125,9 @@ cd firmware/esp32-door
 | `test_protocol` | Validación de `session_id` y UID; configuración fuera de rango ignorada; comandos `OPEN`/`REBOOT` ignorados; `GRANTED` malformado rechazado |
 | `test_backend_client` | Petición firmada correctamente; nonces únicos; rechaza clave errónea, cuerpo alterado, respuesta reinyectada o caducada; sin NTP no se envía nada |
 | `test_lcd` | Pantalla correcta para cada estado (esperando tarjeta, presencia y distancia, RFID, verificando, rostro, concedido, denegado con motivo, puerta abierta/cerrada, error de conexión, desconectado); 4 líneas de 20 caracteres ASCII en todas las pantallas |
-| `test_controller` | Flujo completo con confirmaciones; tarjeta sola ⇒ no abre; DENIED, error de red o firma inválida ⇒ cerrada; GRANTED de otra sesión o sin presencia ⇒ cerrada; caída de WiFi ⇒ OFFLINE y cierre; configuración remota; cierres de emergencia remoto y local |
+| `test_environment` | DHT11: 3 fallos seguidos ⇒ `ERROR` y ventilador apagado; envío cada 10 s; `{fan, alarm}` firmado aplicado; firma inválida, error o sin conexión ⇒ respaldo local con histéresis de 1 °C; el backend no puede apagar un ventilador necesario; umbrales incoherentes rechazados; nunca toca la puerta |
+| `test_entrance` | Señal QR: consulta cada 1 s; `GRANTED` ⇒ LED de la entrada `led_ms` y ack; `DENIED` ⇒ parpadeo rojo y ack; resultado desconocido, firma inválida o formato erróneo ⇒ ignorada sin ack; la misma señal no se muestra dos veces; **nunca mueve el servo** |
+| `test_controller` | Flujo completo con confirmaciones; tarjeta sola ⇒ no abre; DENIED, error de red o firma inválida ⇒ cerrada; GRANTED de otra sesión ⇒ cerrada; la tarjeta se envía y el GRANTED se aplica sin presencia (sensor interior); alarma de intrusión (backend, local sin conexión, no en el arranque); botón de salida (abre solo con sesión del backend, ignorado sin conexión o con otro intento); DHT11 en `ERROR` no bloquea la puerta; caída de WiFi ⇒ OFFLINE y cierre; configuración remota; cierres de emergencia remoto y local |
 
 ### 4.2 Pruebas de integración (PC: firmware real ↔ gateway por HTTP)
 
@@ -173,14 +186,18 @@ curl -X POST localhost:8000/mock/scenario -d '{"scenario":"deny"}'
 | I1 | Conexión | Encender | `backend ONLINE`; heartbeats en el log del mock; LED verde parpadeando |
 | I2 | Umbral remoto | `--threshold-cm 80` y reiniciar el mock | `presence threshold = 80 cm` en la consola |
 | I3 | Acceso concedido | `grant`: acercarse y pasar tarjeta | Abre unos 5 s, se cierra sola; `opened`/`closed TIMER` en el mock |
-| I4 | Tarjeta sin presencia | Pasar tarjeta a más de 1 m | `card ignored: no presence`; el mock no recibe `start` |
+| I4 | Tarjeta sin presencia | Pasar tarjeta sin nadie ante el HC-SR04 | La tarjeta se envía igual (`start` en el mock): el sensor está dentro de la sala y no es un factor de acceso |
 | I5 | Denegado | `deny` | LED rojo y pitidos; puerta cerrada |
 | I6 | Respuesta falsificada | `badsig`, `unsigned`, `replay` | Puerta cerrada; `response BAD_SIGNATURE` en la consola |
 | I7 | Timeout | `never` | Unos 12 s después: `session aborted: TIMEOUT`; puerta cerrada |
 | I8 | Corte de red | Parar el mock con la puerta cerrada | `OFFLINE` en unos 45 s; LED rojo parpadeando; las tarjetas se ignoran |
 | I9 | Corte con la puerta abierta | `--open-ms 20000`, abrir y parar el mock | Se cierra (EMERGENCY) al detectar OFFLINE, a más tardar con el temporizador |
 | I10 | Emergencia remota | `emergency` con `--open-ms 20000` | Se cierra en ≤ 2 s tras abrirse; `closed EMERGENCY` |
-| I11 | Emergencia local | Abrir y pulsar el botón o escribir `close` | Cierre inmediato; `closed LOCAL_BUTTON` |
+| I11 | Emergencia local | Abrir y escribir `close` en la consola | Cierre inmediato; `closed LOCAL_BUTTON` |
+| I11b | Botón de salida | Pulsar el botón del GPIO 4 con la puerta cerrada | `exit button -> backend`. El mock no implementa `/device/exit-button` (404 firmado) ⇒ intento abortado, puerta cerrada. Con el backend real abre solo si hay alguien dentro |
+| I14 | Entrada principal (QR) | `curl -X POST localhost:8000/mock/entrance -d '{"result":"GRANTED","led_ms":3000}'` (o `DENIED`) | LED del GPIO 14 encendido 3 s y LCD `ACCESO QR OK` (o rojo ×3 + pitido y `QR DENEGADO`); `entrance_ack` en el mock; el servo no se mueve |
+| I15 | DHT11 | Calentar el sensor con la mano o desconectar DATA | `environment` cada 10 s en el mock; ventilador (GPIO 2) a partir de 27 °C; desconectado: `TEMP/HUM: ERROR DHT`, ventilador apagado y `sensors.dht = ERROR` |
+| I16 | Intrusión | Ponerse ante el HC-SR04 sin conexión con el backend (más de 20 s tras arrancar) | Alarma local 20 s: LED rojo y zumbador a 250 ms. El mock responde `presence` sin `alarm`, así que con él conectado no suena |
 | I12 | Reinicio con la puerta abierta | Abrir y pulsar EN/RST | Al arrancar, el servo vuelve a 0° |
 | I13 | Watchdog/NTP | Bloquear el NTP del router | El dispositivo no sale de OFFLINE (no firma sin hora válida) |
 

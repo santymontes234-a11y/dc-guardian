@@ -15,13 +15,16 @@ tabla se ha copiado de ese archivo.
 |---|---|---|
 | ESP32 DevKit v1 (ESP32-WROOM-32) | Controlador de la puerta: lee sensores, habla con el backend por HTTP firmado con HMAC y mueve el servo | Con una WROVER, los GPIO 16/17 no están libres (ver LCD) |
 | RFID RC522 + tarjetas/llaveros MIFARE (13.56 MHz) | Primer factor: el UID se envía al backend, que es quien decide | **Solo 3.3 V** |
-| Sensor ultrasónico HC-SR04 | Presencia frente a la puerta: sin presencia se ignora la tarjeta, y si la persona se aleja se deniega el acceso | Divisor 1 kΩ / 2 kΩ en ECHO |
+| Sensor ultrasónico HC-SR04 | **Dentro de la sala**: alarma de intrusión (zumbador + LED rojo 20 s) si detecta a alguien y no hay nadie autorizado dentro. No interviene en el acceso | Divisor 1 kΩ / 2 kΩ en ECHO |
 | Servo SG90 (o MG996R) | Representa la cerradura: 0° cerrado, 90° abierto | MG996R exige fuente externa ≥ 2.5 A |
 | LCD 2004 con módulo I2C PCF8574 (opcional) | Muestra el estado: esperando tarjeta, distancia, verificando, rostro, concedido o denegado, puerta y errores | Ver §3 |
-| Pulsador | Cierre de emergencia local, que solo cierra y nunca abre | A GND, con pull-up interno |
+| Sensor DHT11 (módulo de 3 pines o sensor + 10 kΩ) | Temperatura y humedad del **Servidor de clientes**: lectura cada 2 s, envío al backend cada 10 s, alertas de temperatura alta/crítica y humedad fuera de rango | **3.3 V**; pull-up de 10 kΩ en DATA. Librería `adafruit/DHT sensor library@1.4.6` |
+| LED verde de 5 mm + 220 Ω | **Entrada principal**: se enciende `led_ms` (5 s) cuando el backend acepta el código QR leído por el kiosco. Nunca mueve el servo | Distinto del LED verde de la sala |
+| LED amarillo + 220 Ω, **o** relevador de 5 V + NPN 2N2222/BC547 + 1 kΩ + diodo 1N4007 | Ventilador de la sala: se enciende a partir de `temp_high_c` (27 °C), con 1 °C de histéresis | El relevador solo vía transistor NPN y con diodo en la bobina (o un módulo de relevador que ya los traiga, activo en alto) |
+| Pulsador | Botón de salida interior: abre solo si hay alguien dentro, según el backend (sin conexión no abre) | A GND, con pull-up interno |
 | LED verde y LED rojo + 2 × 220 Ω (opcional) | Indicación visual | |
 | Zumbador activo + 2N2222 + 1 kΩ (opcional) | Indicación sonora | |
-| Webcam USB o integrada | Segundo factor: la usa el **navegador** del kiosco (`/pages/kiosk.html`), no el ESP32 | El kiosco debe abrirse en `http://localhost` o con HTTPS |
+| Webcam USB o integrada | Segundo factor de la sala (rostro) y **lector del código QR** de la entrada principal: la usa el **navegador** del kiosco, no el ESP32 | El kiosco debe abrirse en `http://localhost` o con HTTPS |
 | PC con Linux | Ejecuta el backend (nativo o Docker) y el navegador del kiosco | Misma red WiFi que el ESP32 |
 | Protoboard, cables dupont, resistencias 1 kΩ y 2 kΩ, condensador 470–1000 µF / ≥ 10 V | Montaje y filtrado del servo | |
 | Fuente de 5 V ≥ 1 A (SG90) o ≥ 2.5 A (MG996R) | Alimentación del servo | GND común con el ESP32 |
@@ -45,12 +48,17 @@ tabla se ha copiado de ese archivo.
 | LCD 2004 (PCF8574) | SDA | GPIO 21 | I2C 100 kHz |
 | LCD 2004 (PCF8574) | SCL | GPIO 17 | Configurable en `PIN_LCD_SCL` |
 | LCD 2004 (PCF8574) | VCC · GND | 5V (VIN) · GND | Contraste con el potenciómetro del módulo |
-| Pulsador de emergencia | un terminal | GPIO 4 | El otro a GND |
+| Pulsador de salida (interior) | un terminal | GPIO 4 | El otro a GND |
 | LED verde | ánodo (con 220 Ω) | GPIO 25 | |
 | LED rojo | ánodo (con 220 Ω) | GPIO 33 | |
 | Zumbador | base del 2N2222 (con 1 kΩ) | GPIO 32 | |
+| DHT11 | DATA (pull-up 10 kΩ a 3.3 V) | GPIO 16 | VCC a 3.3 V |
+| LED verde de la entrada principal | ánodo (con 220 Ω) | GPIO 14 | Señal del QR |
+| Ventilador (LED amarillo o relevador) | ánodo con 220 Ω, o base del NPN con 1 kΩ | GPIO 2 | El LED integrado también se enciende |
 
-Pines evitados a propósito: GPIO 0, 2, 12 y 15 (de arranque), 6–11 (flash) y 34–39 (solo entrada).
+Pines evitados a propósito: GPIO 0, 12 y 15 (de arranque), 6–11 (flash) y 34–39 (solo entrada).
+El GPIO 2 (también de arranque) se usa para el ventilador: la carga lo mantiene en bajo al
+arrancar, que es lo que necesita el ESP32 ([cableado.md §8](cableado.md#8-ventilador-led-amarillo-o-relevador)).
 
 ## 3. LCD 2004 I2C
 
@@ -74,7 +82,7 @@ un patrón de prueba con la dirección detectada.
 
 ### Máquina de estados de la pantalla
 
-La lógica es pura y tiene pruebas (`lib/dcg_core/src/lcd_view.*`, `test/test_lcd`, 14 casos).
+La lógica es pura y tiene pruebas (`lib/dcg_core/src/lcd_view.*`, `test/test_lcd`).
 Las pantallas usan solo ASCII, porque la ROM A00 del HD44780 no tiene tildes.
 
 | # | Pantalla (`LcdScreen`) | Cuándo | Línea 1 |
@@ -92,9 +100,18 @@ Las pantallas usan solo ASCII, porque la ROM A00 del HD44780 no tiene tildes.
 | 11 | `CONN_ERROR` / `ACCESS_ERROR` | Hay WiFi pero el backend o NTP no responden / un intento abortado por la red | `ERROR DE CONEXION` |
 | 12 | `DISCONNECTED` | Sin WiFi | `SISTEMA DESCONECTADO` |
 | – | `SENSOR_ERROR`, `CONFIG_ERROR`, `BOOT` | Fallo del RC522 o del HC-SR04 · `dcg_config.h` inválido · arranque | |
+| – | (temperatura) | Línea 3 de `WAIT_CARD` en cuanto el DHT11 ha respondido | `TEMP 24.5C HUM 51%` / `TEMP/HUM: ERROR DHT` |
+| – | `ENTRANCE_GRANTED` | Señal `GRANTED` de la entrada principal (3 s) | `ENTRADA PRINCIPAL` · `ACCESO QR OK` · nombre |
+| – | `ENTRANCE_DENIED` | Señal `DENIED` de la entrada principal (3 s) | `ENTRADA PRINCIPAL` · `QR DENEGADO` |
+| – | `ENV_ALARM` | Alarma ambiental, en reposo | `ALARMA AMBIENTAL` · temperatura · causa · `Ventilador: ON/OFF` |
+
+Las pantallas de la entrada principal no interrumpen un ciclo de la sala en curso (tarjeta,
+rostro o puerta en movimiento): el LED de la entrada se enciende igualmente.
 
 ### Por qué no bloquea
 
+- El DHT11 se lee en otra tarea propia (`dht`, núcleo 1, prioridad 1, cada 2 s). Una lectura
+  bloquea unos 25 ms, pero solo a esa tarea.
 - La pantalla tiene su **propia tarea FreeRTOS** (`lcd`, núcleo 0, prioridad 1, cada 100 ms). La
   lectura RFID y el HTTP corren en el `loop()` (núcleo 1). El servo y el HC-SR04 corren en la tarea `io`
   (núcleo 1, prioridad 3). Ninguna de ellas toca el bus I2C.

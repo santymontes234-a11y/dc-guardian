@@ -16,6 +16,8 @@
 
 #include "access_controller.h"
 #include "backend_client.h"
+#include "entrance.h"
+#include "environment.h"
 #include "hal_esp32.h"
 #include "lcd_esp32.h"
 #include "net.h"
@@ -35,6 +37,9 @@
 #ifndef DCG_WIFI_PASSWORD_2
 #define DCG_WIFI_PASSWORD_2 ""
 #endif
+#ifndef DCG_SERVO_INVERT
+#define DCG_SERVO_INVERT 0  // older dcg_config.h without the option: normal rotation
+#endif
 #ifndef DCG_LCD_ENABLED
 #define DCG_LCD_ENABLED 1
 #endif
@@ -43,7 +48,9 @@
 #endif
 
 static const char* kFirmwareVersion = "1.0.0";
-static constexpr uint32_t kWatchdogS = 15;  // > worst case loop (3 HTTP calls × 3 s)
+// > worst case loop: heartbeat + session call + confirmation + ONE auxiliary call (entrance
+// poll/ack or environment), each with a 3 s timeout = 12 s.
+static constexpr uint32_t kWatchdogS = 15;
 
 using namespace dcg;
 
@@ -54,6 +61,8 @@ static Esp32Hal* hal = nullptr;
 static Lcd2004* lcd = nullptr;
 static BackendClient* backend = nullptr;
 static AccessController* controller = nullptr;
+static EnvController* envCtl = nullptr;
+static EntrancePoller* entrance = nullptr;
 static bool configOk = false;
 
 static bool isHex64(const char* s) {
@@ -76,6 +85,13 @@ static void printStatus() {
       wifiUp(), wifiSsid(), hal->rssi(), ntpClock.synced(),
       controller->sessionId().empty() ? "-" : controller->sessionId().c_str(), hal->freeHeap(),
       (lcd && lcd->present()) ? lcd->screenName() : "none");
+  const EnvStatus e = hal->envStatus();
+  Serial.printf("dht=%s temp=%.1f hum=%.1f fan=%d env_alarm=%d env_local=%d entrance_led=%d "
+                "thr_high=%.1f thr_crit=%.1f hum=%.0f-%.0f\n",
+                dhtStatusName(e.sensor), e.temperatureC, e.humidityPct, e.fan, e.alarm,
+                e.fallback, hal->entranceLedOn(), e.thresholds.tempHighC,
+                e.thresholds.tempCriticalC, e.thresholds.humidityLowPct,
+                e.thresholds.humidityHighPct);
 }
 
 static void handleSerial() {
@@ -91,7 +107,7 @@ static void handleSerial() {
     if (line == "status") {
       printStatus();
     } else if (line == "close") {
-      // Same effect as the physical emergency button: can only close, never open.
+      // Emergency close from the serial console: can only close, never open.
       controller->localEmergencyClose();
 #if DCG_BENCH_MODE
     } else if (line.startsWith("uid ")) {
@@ -128,6 +144,7 @@ void setup() {
   hc.door.travelMs = DCG_SERVO_TRAVEL_MS;
   hc.servoMinUs = DCG_SERVO_MIN_US;
   hc.servoMaxUs = DCG_SERVO_MAX_US;
+  hc.servoInvert = DCG_SERVO_INVERT != 0;
   hal = new Esp32Hal(hc);
   hal->begin();  // servo is commanded CLOSED here, before any networking
 
@@ -161,6 +178,8 @@ void setup() {
   bs.clockSkewS = DCG_CLOCK_SKEW_S;
   backend = new BackendClient(bs, transport, ntpClock, rng);
   controller = new AccessController(*hal, *backend, kFirmwareVersion);
+  envCtl = new EnvController(*hal, *backend);
+  entrance = new EntrancePoller(*hal, *backend);
 
   // A hung loop resets the chip; after reset the servo is commanded CLOSED again.
   esp_task_wdt_init(kWatchdogS, true);
@@ -179,10 +198,25 @@ void loop() {
     lastRfidCheck = millis();
     hal->checkRfidHealth();
   }
-  if (hal->takeButtonPress()) controller->localEmergencyClose();
+  if (hal->takeButtonPress()) controller->requestExitByButton();  // opens only if someone is inside
   handleSerial();
   wifiTick();
   controller->tick();
+
+  // Auxiliary features, independent of the room door: at most ONE HTTP call per pass, so
+  // the session poll keeps its pace. The servo lives in the io task and is never blocked.
+  const uint32_t now = millis();
+  const bool online = controller->online();
+  envCtl->setThresholds(controller->config().env);
+  static bool envFirst = false;  // alternate priority so neither starves the other
+  envFirst = !envFirst;
+  if (envFirst) {
+    if (!envCtl->tick(now, online)) entrance->tick(now, online);
+  } else {
+    if (!entrance->tick(now, online)) envCtl->tick(now, online);
+    else envCtl->tick(now, online, false);  // drains DHT samples, no call this pass
+  }
+  controller->setDhtOk(envCtl->sensorOk());
   delay(10);
 }
 

@@ -3,18 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Panel · DC Guardian</title>
+  <title>Panel · Telecom Conecta · DC Guardian</title>
   <link rel="stylesheet" href="/css/dashboard.css">
 </head>
 <body data-page="dashboard">
   <main id="content">
     <div class="row">
-      <h1 style="margin:0">Panel de control</h1>
+      <div>
+        <h1 style="margin:0">Panel de control</h1>
+        <p class="dash-sub"><b>Telecom Conecta</b> · <time id="today"></time></p>
+      </div>
       <span class="spacer"></span>
-      <span id="live" class="badge badge-muted">Conectando…</span>
+      <span id="live" class="badge badge-muted" role="status">Conectando…</span>
     </div>
 
     <section class="grid grid-kpi kpis" id="kpis"></section>
+
+    <section class="card env-card" aria-labelledby="env-title">
+      <div class="row"><h2 id="env-title" style="margin:0">Sala de servidores — DHT11</h2><span class="spacer"></span>
+        <span id="env-fresh" class="badge badge-muted">Sin lecturas</span></div>
+      <div class="env-now" aria-live="polite">
+        <div class="env-metric"><span class="label">Temperatura</span><span class="value" id="env-temp">—</span>
+          <span class="hint" id="env-temp-hint"></span></div>
+        <div class="env-metric"><span class="label">Humedad</span><span class="value" id="env-hum">—</span>
+          <span class="hint" id="env-hum-hint"></span></div>
+        <div class="env-metric"><span class="label">Ventilador</span>
+          <span class="value small"><span class="fan" id="env-fan-icon" aria-hidden="true"></span> <span id="env-fan">—</span></span></div>
+        <div class="env-metric"><span class="label">Alarma ambiental</span><span class="value small" id="env-alarm">—</span></div>
+        <div class="env-metric"><span class="label">Sensor</span><span class="value small" id="env-sensor">—</span>
+          <span class="hint" id="env-at"></span></div>
+      </div>
+      <div class="grid grid-2 env-charts">
+        <figure><figcaption>Temperatura (°C) · últimos 60 min</figcaption><svg class="chart temp" id="chart-temp"></svg></figure>
+        <figure><figcaption>Humedad relativa (%) · últimos 60 min</figcaption><svg class="chart hum" id="chart-hum"></svg></figure>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row"><h2 style="margin:0">Bitácora reciente</h2><span class="spacer"></span>
+        <a href="/pages/access-log.html">Ver bitácora completa</a></div>
+      <div class="table-wrap"><table class="table"><thead id="log-head"></thead><tbody id="log-rows"></tbody></table></div>
+    </section>
 
     <section class="grid grid-2">
       <div class="card">

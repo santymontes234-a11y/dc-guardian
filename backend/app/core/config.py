@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     failure_max: int = 3
     card_lock_minutes: int = 10  # ...lock the card this long
     exit_window_hours: int = 24  # an entry older than this no longer counts as "inside"
+    intrusion_alarm_s: int = Field(default=20, ge=5, le=120)  # inside sensor alarm duration
+    intrusion_door_grace_s: int = Field(default=15, ge=0, le=120)  # crossing the door is not an intrusion
+    # --- Main entrance (QR at reception → green LED driven by the same ESP32) ---
+    entrance_device_code: str = Field(default="DC-DOOR-01", pattern=r"^[A-Za-z0-9-]{2,30}$")
+    entrance_area_code: str = Field(default="ENTRADA_PRINCIPAL", max_length=30)
+    entrance_led_ms: int = Field(default=5000, ge=1000, le=10000)  # green LED time on GRANTED
+    entrance_signal_ttl_s: int = Field(default=10, ge=2, le=60)  # undelivered signal → EXPIRADA
+    qr_scan_rate_per_minute: int = Field(default=20, ge=1, le=600)  # per kiosk client
+    # --- Environment (DHT11 in the server room) ---
+    temp_high_c: float = Field(default=27, ge=15, le=45)  # fan on (off below temp_high_c - 1)
+    temp_critical_c: float = Field(default=32, ge=15, le=50)  # alarm
+    humidity_low_pct: float = Field(default=20, ge=0, le=100)
+    humidity_high_pct: float = Field(default=80, ge=0, le=100)
+    environment_retention_days: int = Field(default=7, ge=1, le=365)
     # Kiosk (face camera next to the door). None in dev/test → derived from DCG_MASTER_KEY.
     kiosk_token: str | None = None
     # Simulation: where the virtual ESP32 sends its signed requests (this same backend).
@@ -106,6 +120,12 @@ class Settings(BaseSettings):
             raise ValueError("DCG_FACE_MIN_MATCHES must be <= DCG_FACE_FRAMES")
         if self.face_duplicate_threshold > self.face_threshold:
             raise ValueError("DCG_FACE_DUPLICATE_THRESHOLD must be <= DCG_FACE_THRESHOLD")
+        # Environment thresholds must be coherent (the firmware rejects them otherwise).
+        if self.temp_critical_c <= self.temp_high_c:
+            raise ValueError("DCG_TEMP_CRITICAL_C must be > DCG_TEMP_HIGH_C")
+        if self.humidity_high_pct <= self.humidity_low_pct:
+            raise ValueError("DCG_HUMIDITY_HIGH_PCT must be > DCG_HUMIDITY_LOW_PCT")
+        self.entrance_device_code = self.entrance_device_code.upper()
         # The virtual ESP32 signs real device requests: they must never leave this machine.
         sim_host = urlsplit(self.sim_base_url).hostname
         if sim_host not in ("127.0.0.1", "localhost", "::1"):

@@ -22,3 +22,39 @@
 .reason-bar .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--danger); opacity: .7; }
 
 @media (max-width: 640px) { .feed .type { min-width: 0; } }
+
+.dash-sub { margin: 2px 0 0; color: var(--text-muted); font-size: 14px; }
+.dash-sub b { color: var(--primary); }
+
+/* Sala de servidores — DHT11 */
+.env-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 12px 0; }
+.env-metric { display: grid; gap: 2px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); }
+.env-metric .label { color: var(--text-muted); font-size: 13px; }
+.env-metric .value { font-size: 28px; font-weight: 700; }
+.env-metric .value.small { font-size: 18px; display: flex; align-items: center; gap: 6px; }
+.env-metric .hint { color: var(--text-muted); font-size: 12px; }
+.env-metric .value.ok { color: var(--ok); }
+.env-metric .value.warn { color: var(--warn); }
+.env-metric .value.danger { color: var(--danger); }
+.fan { display: inline-block; width: 20px; height: 20px; border-radius: 50%;
+  background: conic-gradient(currentColor 0 25%, transparent 0 50%, currentColor 0 75%, transparent 0); opacity: .5; }
+.fan.on { opacity: 1; color: var(--ok); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .fan.on { animation: none; } }
+
+.env-charts figure { margin: 0; }
+.env-charts figcaption { font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
+.chart { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .axis { fill: var(--text-muted); font-size: 13px; font-family: var(--font); }
+.chart .series { fill: none; stroke-width: 2.5; stroke-linejoin: round; }
+.chart.temp .series, .chart.temp .dot { stroke: #e0622b; fill: none; }
+.chart.temp .dot { fill: #e0622b; }
+.chart.hum .series { stroke: var(--info); }
+.chart.hum .dot { fill: var(--info); }
+.chart .threshold { stroke-width: 1.5; stroke-dasharray: 6 4; }
+.chart .threshold.warn { stroke: var(--warn); }
+.chart .threshold.danger { stroke: var(--danger); }
+.chart .th-label { font-size: 12px; font-family: var(--font); }
+.chart .th-label.warn { fill: var(--warn); }
+.chart .th-label.danger { fill: var(--danger); }
