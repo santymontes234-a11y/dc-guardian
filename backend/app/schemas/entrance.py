@@ -5,14 +5,25 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import SaneDatetime
 
 
 # ----------------------------------------------------------------- QR credentials (admin)
 class QrIssueIn(BaseModel):
+    """Permanent credential (no fields), or a temporary pass: ``valid_minutes`` (preferred: the
+    server's clock decides) or an explicit ``expires_at``, optionally ``single_use``."""
+
     expires_at: SaneDatetime | None = None  # None = does not expire
+    valid_minutes: int | None = Field(default=None, ge=5, le=60 * 24 * 30, description="Validez desde ahora")
+    single_use: bool = Field(default=False, description="El primer acceso concedido consume el pase")
+
+    @model_validator(mode="after")
+    def _one_way_to_expire(self) -> "QrIssueIn":
+        if self.expires_at is not None and self.valid_minutes is not None:
+            raise ValueError("Usa expires_at o valid_minutes, no ambos")
+        return self
 
 
 class QrEngineer(BaseModel):
@@ -25,11 +36,14 @@ class QrIssued(BaseModel):
     qr_text: str = Field(description="Texto completo del QR (`DCG-QR1:<token>`). Se muestra solo esta vez")
     prefix: str
     expires_at: datetime | None
+    single_use: bool
     engineer: QrEngineer
 
 
 class QrStatusOut(BaseModel):
     active: bool
+    expired: bool = False  # still ACTIVA in the database but past its expiry: it will not open anything
+    single_use: bool = False
     prefix: str | None
     created_at: datetime | None
     expires_at: datetime | None

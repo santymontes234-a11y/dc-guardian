@@ -10,7 +10,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -28,6 +29,8 @@ class QrCredential(Base):
     prefix: Mapped[str] = mapped_column(String(6))  # first 6 chars of the token, for display only
     status: Mapped[QrStatus] = mapped_column(enum_col(QrStatus), default=QrStatus.ACTIVE, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # NULL = does not expire
+    # Visit / supplier pass: the first GRANTED scan consumes it (it is then revoked).
+    single_use: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sa_false())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
     last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

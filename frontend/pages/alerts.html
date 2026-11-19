@@ -8,6 +8,14 @@
 <body data-page="alerts">
   <main id="content">
     <h1>Alertas</h1>
+    <section class="card" id="tg-card" hidden>
+      <div class="row">
+        <b>Avisos por Telegram</b>
+        <span class="muted" id="tg-state">Comprobando…</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn" id="tg-test" disabled>Enviar mensaje de prueba</button>
+      </div>
+    </section>
     <section class="card">
       <div class="row" style="margin-bottom:12px">
         <label class="row" style="color:var(--text)"><input type="checkbox" id="open" checked> Solo abiertas</label>
@@ -19,7 +27,7 @@
   </main>
   <script type="module">
     import { ready } from "/js/layout.js";
-    import { api, guarded, toast } from "/js/api.js";
+    import { api, ApiError, guarded, toast } from "/js/api.js";
     import { connectEvents } from "/js/ws.js";
     import { $, ALERT_HEAD, alertRow, emptyRow } from "/js/ui.js";
 
@@ -36,10 +44,34 @@
       const id = e.target.closest("tr").dataset.id;
       if (await guarded(() => api.post(`/alerts/${id}/ack`))) { toast("Alerta atendida", "ok"); load(); }
     });
+    // Panel de Telegram: solo lo ven los administradores (el auditor recibe 403 y no se muestra).
+    async function loadTelegram() {
+      try {
+        const { telegram } = await api.get("/system/notifications", null, { noRedirect: true });
+        $("tg-card").hidden = false;
+        $("tg-state").textContent = telegram.configured
+          ? `Activo: avisa las alertas de nivel ${telegram.min_severity} o superior`
+          : "No configurado: define DCG_TELEGRAM_BOT_TOKEN y DCG_TELEGRAM_CHAT_ID en backend/.env y reinicia";
+        $("tg-test").disabled = !telegram.configured;
+      } catch { /* sin permiso o sin red: el panel permanece oculto */ }
+    }
+    $("tg-test").addEventListener("click", async () => {
+      const btn = $("tg-test");
+      btn.disabled = true;
+      try {
+        await api.post("/system/notifications/test");
+        toast("Mensaje de prueba enviado a Telegram", "ok");
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 401)) toast(err.message ?? String(err), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
     $("open").addEventListener("change", load);
     $("severity").addEventListener("change", load);
     connectEvents().on("alert.*", load);
     load();
+    loadTelegram();
   </script>
 </body>
 </html>

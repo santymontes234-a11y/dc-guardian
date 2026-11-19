@@ -87,6 +87,7 @@ export const REASON_TEXT = {
   QR_UNKNOWN: "Credencial QR no registrada en el sistema",
   QR_REVOKED: "La credencial QR fue revocada",
   QR_EXPIRED: "La credencial QR ha vencido",
+  QR_USED: "El pase de un solo uso ya fue utilizado",
   DEVICE_OFFLINE: "El dispositivo de la entrada está fuera de línea: la puerta permanece cerrada",
   RATE_LIMITED: "Demasiados intentos seguidos: espere un momento",
 };

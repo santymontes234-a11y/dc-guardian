@@ -131,7 +131,9 @@ def issue_qr(engineer_pk: PathId, ctx: AdminCtx, db: DbSession, body: QrIssueIn 
     """Issues the engineer's QR for the main entrance and revokes the previous one. The QR text
     is returned **only now** (only its SHA-256 is stored). The QR identifies; it does not
     authorize: each scan also requires an approved authorization in force (Registro 2)."""
-    return qr_service.issue(db, ctx, engineer_pk, body.expires_at if body else None)
+    body = body or QrIssueIn()
+    return qr_service.issue(db, ctx, engineer_pk, body.expires_at,
+                            valid_minutes=body.valid_minutes, single_use=body.single_use)
 
 
 @router.get("/{engineer_pk}/qr", response_model=QrStatusOut)

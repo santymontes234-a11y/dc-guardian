@@ -306,6 +306,7 @@ function renderQr() {
   const erased = eng?.status === "ELIMINADO";
   const active = Boolean(qr?.active);
   $("qr-issue").hidden = erased || !isAdmin;
+  $("qr-options").hidden = erased || !isAdmin;
   $("qr-issue").textContent = active ? "Generar nuevo QR" : "Generar QR";
   $("qr-revoke").hidden = !active || !isAdmin;
   if (!qr) return;
@@ -313,10 +314,21 @@ function renderQr() {
     : '<span class="badge badge-muted">Sin credencial activa</span>']];
   if (qr.prefix) rows.push(["Prefijo", `<span class="mono">${escapeHtml(qr.prefix)}</span>`]);
   if (active || qr.created_at) rows.push(["Emitida", fmtDate(qr.created_at)]);
-  if (active) rows.push(["Vence", qr.expires_at ? fmtDate(qr.expires_at) : "Sin vencimiento"]);
+  if (active) {
+    const kind = qr.single_use ? "Pase de un solo uso" : qr.expires_at ? "Pase temporal" : "Permanente";
+    rows.push(["Tipo", kind]);
+    const expiry = qr.expires_at ? fmtDate(qr.expires_at) : "Sin vencimiento";
+    rows.push(["Vence", qr.expired ? `${expiry} <span class="badge badge-muted">Vencida</span>` : expiry]);
+  }
   if (active || qr.last_used_at) rows.push(["Último uso", qr.last_used_at ? fmtDate(qr.last_used_at) : "Nunca"]);
   $("qr-status").innerHTML = `<dl class="qr-dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
 }
+
+$("qr-kind").addEventListener("change", () => {
+  const temporary = Boolean($("qr-kind").value);
+  $("qr-single").disabled = !temporary;  // un pase permanente de un solo uso no existe
+  if (!temporary) $("qr-single").checked = false;
+});
 
 $("qr-issue").addEventListener("click", async () => {
   if (qr?.active && !confirm(`${eng.engineer_id} ya tiene una credencial QR activa (prefijo ${qr.prefix ?? "?"}). `
@@ -324,7 +336,13 @@ $("qr-issue").addEventListener("click", async () => {
   const btn = $("qr-issue");
   btn.disabled = true;
   try {
-    const r = await api.post(`/engineers/${id}/qr`);
+    const minutes = Number($("qr-kind").value);
+    const body = {};
+    if (minutes > 0) {
+      body.valid_minutes = minutes;
+      if ($("qr-single").checked) body.single_use = true;
+    }
+    const r = await api.post(`/engineers/${id}/qr`, body);
     if (!r?.qr_text) throw new Error("El servidor no devolvió el código");
     const canvas = drawCredential({
       qrText: r.qr_text,
@@ -334,6 +352,7 @@ $("qr-issue").addEventListener("click", async () => {
       prefix: r.prefix,
       issuedAt: new Date().toISOString(),
       expiresAt: r.expires_at,
+      singleUse: r.single_use,
     });
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", `Credencial QR de ${r.engineer?.full_name ?? eng.full_name}, prefijo ${r.prefix ?? ""}`);

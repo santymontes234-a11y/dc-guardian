@@ -10,6 +10,8 @@ from sqlalchemy import func, select
 
 from app.api.deps import AdminCtx, AdminOnly, AdminOrAuditor, DbSession, ReadDb
 from app.api.v1.kiosk import kiosk_token
+from app.core.config import get_settings
+from app.core.errors import DomainError
 from app.db.types import utcnow
 from app.models import AccessSession, Alert, Device, Engineer
 from app.models.enums import AccessDirection, AccessState, AlertSeverity
@@ -19,6 +21,7 @@ from app.services import access_engine as engine
 from app.services import access_log as access_log_service
 from app.services import environment as environment_service
 from app.services import alerts as alerts_service
+from app.services import notifier
 from app.services import requests as requests_service
 
 sessions = APIRouter(prefix="/access-sessions", tags=["access sessions"])
@@ -135,6 +138,36 @@ def emergency_close(device_id: PathId, ctx: AdminCtx, db: DbSession):
 def get_kiosk_token(_: AdminOnly):
     """Token for the face kiosk (X-Kiosk-Token). Admin only."""
     return {"token": kiosk_token()}
+
+
+@system.get("/notifications")
+def notifications_status(_: AdminOnly):
+    """Whether Telegram alerts are configured. Never returns the token or the chat id."""
+    s = get_settings()
+    return {"telegram": {"configured": notifier.is_enabled(), "min_severity": s.telegram_min_severity,
+                         "site_name": s.site_name}}
+
+
+@system.post("/notifications/test")
+def notifications_test(ctx: AdminCtx, db: DbSession):
+    """Sends a test message to the configured Telegram chat (admin only, audited)."""
+    s = get_settings()
+    # The write transaction (BEGIN IMMEDIATE) starts at the first statement, i.e. the audit entry
+    # below: the slow network call happens before it and never holds the SQLite write lock.
+    if not notifier.is_enabled():
+        raise DomainError("NOTIFICATIONS_NOT_CONFIGURED",
+                          "Telegram no está configurado: define DCG_TELEGRAM_BOT_TOKEN y DCG_TELEGRAM_CHAT_ID "
+                          "en backend/.env y reinicia el backend", 409)
+    try:
+        notifier.send_text(f"✅ Prueba de notificaciones · {s.site_name}\n"
+                           "DC Guardian enviará aquí las alertas del centro de datos.")
+    except notifier.NotifyError as exc:
+        ctx.audit(db, "notification.test_failed", "notification", "telegram", {"error": str(exc)})
+        db.commit()
+        raise DomainError("NOTIFY_FAILED", str(exc), 502) from None
+    ctx.audit(db, "notification.test_sent", "notification", "telegram")
+    db.commit()
+    return {"sent": True}
 
 
 # ------------------------------------------------------------------ dashboard

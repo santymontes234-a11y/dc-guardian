@@ -40,6 +40,7 @@ _QR_ALERTS: dict[str, tuple[str, int | None]] = {
     "QR_INVALID": ("UNKNOWN_QR", 60),
     "QR_UNKNOWN": ("UNKNOWN_QR", 60),
     "QR_REVOKED": ("QR_BLOCKED", None),
+    "QR_USED": ("QR_BLOCKED", None),  # a spent single-use pass shown again: replay or a shared photo
     "QR_EXPIRED": ("QR_BLOCKED", None),
 }
 
@@ -82,7 +83,8 @@ def _decide(db: Session, now, qr_text: str, dev: Device | None
         return "QR_UNKNOWN", None, None, None
     eng = db.get(Engineer, cred.engineer_id)
     if cred.status != QrStatus.ACTIVE:
-        return "QR_REVOKED", cred, eng, None
+        spent = cred.single_use and cred.last_used_at is not None
+        return ("QR_USED" if spent else "QR_REVOKED"), cred, eng, None
     if cred.expires_at is not None and cred.expires_at <= now:
         return "QR_EXPIRED", cred, eng, None
     if eng is None or eng.status != EngineerStatus.ACTIVE:
@@ -120,6 +122,8 @@ def scan(db: Session, ctx: ActorCtx, qr_text: str, client_key: str) -> dict:
     ctx.audit(db, "entrance.qr_granted" if reason is None else "entrance.qr_denied", "entrance_event", ev.id, details)
     if reason is None:
         cred.last_used_at = now
+        if cred.single_use:
+            qr_service.consume(db, ctx, cred)
     else:
         _alert(db, ctx, ev, reason, cred)
     defer(db, "entrance.scan", event_row(db, ev, area=area, device=dev, engineer=eng))

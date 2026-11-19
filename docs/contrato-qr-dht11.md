@@ -33,13 +33,19 @@ simula con un **LED verde** (puerta abierta) y un parpadeo del LED rojo existent
   completo se devuelve **una sola vez**, al emitirlo.
 - Hay una credencial `ACTIVA` por ingeniero como máximo. Emitir una nueva revoca la anterior.
 - Estados: `ACTIVA`, `REVOCADA`. Si `expires_at` es nulo, la credencial no vence.
+- **Pase temporal** (proveedores y visitas): se emite con `valid_minutes` (o `expires_at`) y vence solo. Pasada
+  esa hora, el QR da `QR_EXPIRED` aunque siga `ACTIVA` en la tabla.
+- **Pase de un solo uso** (`single_use`): el primer escaneo **concedido** lo consume (pasa a `REVOCADA` y se
+  audita `qr.consumed`). Un escaneo denegado (por ejemplo, con el dispositivo sin conexión) no lo gasta. Si
+  vuelve a mostrarse, da `QR_USED` y genera una alerta `QR_BLOCKED`: una foto del código ya no sirve.
+  Debe tener vencimiento, porque un pase de un solo uso permanente seguiría siendo una credencial portadora.
 
 ### API administrativa (requiere JWT de admin)
 
 | Método | Ruta | Respuesta |
 |---|---|---|
-| POST | `/api/v1/engineers/{id}/qr` | `201 {qr_text, prefix, expires_at, engineer:{id, full_name, position}}` |
-| GET | `/api/v1/engineers/{id}/qr` | `{active: bool, prefix, created_at, expires_at, last_used_at}` (sin token) |
+| POST | `/api/v1/engineers/{id}/qr` | Cuerpo opcional `{valid_minutes? \| expires_at?, single_use?}`. `201 {qr_text, prefix, expires_at, single_use, engineer:{id, full_name, position}}` |
+| GET | `/api/v1/engineers/{id}/qr` | `{active, expired, single_use, prefix, created_at, expires_at, last_used_at}` (sin token) |
 | DELETE | `/api/v1/engineers/{id}/qr` | `204`: revoca |
 
 ### Escaneo en la entrada (autenticación de kiosco, igual que `/kiosk/*`)
@@ -57,7 +63,7 @@ Validación en este orden; el primer fallo da `DENIED`:
 |---|---|
 | Formato inválido | `QR_INVALID` |
 | No existe | `QR_UNKNOWN` |
-| La credencial no está activa | `QR_REVOKED` |
+| La credencial no está activa | `QR_REVOKED` (o `QR_USED` si era un pase de un solo uso ya gastado) |
 | La credencial venció | `QR_EXPIRED` |
 | Ingeniero no `ACTIVO` | `ENGINEER_INACTIVE` |
 | Sin autorización `APROBADA` vigente ahora (Registro 2). Se usan los mismos códigos que el motor | `NO_VALID_AUTH`, `AUTH_NOT_STARTED`, `AUTH_EXPIRED`, … |

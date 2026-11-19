@@ -14,6 +14,7 @@ from app.api.v1.router import api_router
 from app.core.config import PROJECT_ROOT, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import setup_logging
+from app.services import notifier
 from app.services.scheduler import scheduler_lifespan
 from app.ws.hub import hub
 from app.ws.router import router as ws_router
@@ -38,6 +39,7 @@ _CID_RE = re.compile(r"^[A-Za-z0-9-]{8,32}$")
 def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
+    notifier.install(hub)  # alerts → Telegram (no-op until DCG_TELEGRAM_* are configured)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):

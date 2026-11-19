@@ -85,7 +85,7 @@ factores, y cada entrada queda registrada. DC Guardian representa ese problema a
 | Registro de ingenieros | Alta, edición, estados (`ACTIVO`, `INACTIVO`, `SUSPENDIDO`) y borrado de datos personales (`ELIMINADO`) |
 | Registro facial | 3–5 muestras con la webcam, control de calidad (un rostro, tamaño, nitidez, pose) y detección de duplicados |
 | Asignación RFID | Registro de tarjetas, vinculación a un ingeniero, bloqueo, pérdida, baja y desbloqueo |
-| Credencial QR | Emisión desde la ficha del ingeniero (`DCG-QR1:<token>`), visible **una sola vez** (copiar, PNG o imprimir). Solo se guarda su SHA-256. Una credencial activa por ingeniero; se puede revocar |
+| Credencial QR | Emisión desde la ficha del ingeniero (`DCG-QR1:<token>`), visible **una sola vez** (copiar, PNG o imprimir). Solo se guarda su SHA-256. Una credencial activa por ingeniero; se puede revocar. Puede ser permanente o un **pase temporal** (de 1 hora a 7 días), opcionalmente **de un solo uso**: pensado para proveedores y visitas, se invalida con el primer acceso concedido |
 | Solicitudes de autorización | Ventana horaria, área y motivo. Estados `PENDIENTE` → `APROBADA`/`RECHAZADA` → `FINALIZADA`/`EXPIRADA`/`REVOCADA` |
 | Aprobación administrativa | Un administrador no puede aprobarse a sí mismo. Suspender a un ingeniero revoca sus autorizaciones |
 | Autenticación RFID | El UID solo identifica la tarjeta. La decisión la toma siempre el backend |
@@ -98,6 +98,7 @@ factores, y cada entrada queda registrada. DC Guardian representa ese problema a
 | Dashboard | KPIs, estado del hardware, ingenieros dentro, denegaciones por motivo, tarjeta del **DHT11** (lectura, ventilador, alarma y gráfica de 60 min) y eventos en tiempo real (WebSocket) |
 | Bitácora y logs | Bitácora de accesos por zona y método (`QR`, `RFID+ROSTRO`, `BOTON_SALIDA`) y auditoría encadenada verificable desde la interfaz |
 | Alertas | Tarjeta o QR desconocidos, fallos repetidos (bloqueo), ingeniero inactivo, rostro no coincidente, intrusión, ambiente fuera de rango, sensor caído, dispositivo sin conexión, firma inválida… |
+| Avisos por Telegram | Cada alerta de nivel `WARN` o superior (configurable) llega también a un chat de Telegram: temperatura, intrusión, QR o tarjeta no válidos… Se activa con `DCG_TELEGRAM_BOT_TOKEN` y `DCG_TELEGRAM_CHAT_ID` en `backend/.env`; el envío es asíncrono, con tope por minuto, y un fallo de Telegram nunca afecta al control de acceso. Botón de prueba en **Alertas** |
 | Simulación | ESP32 virtual que firma peticiones reales y rostros sintéticos: se prueba todo sin hardware |
 
 ## 3. Arquitectura

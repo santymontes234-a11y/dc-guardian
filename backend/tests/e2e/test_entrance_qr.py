@@ -345,3 +345,87 @@ def test_access_log_lists_qr_and_rfid_with_zone_method_person(f, flow, door, ent
     assert q(limit=1, offset=1)["items"][0]["id"] == qr_ok["id"]
     assert q(since=(utcnow() + timedelta(minutes=1)).isoformat())["total"] == 0
     assert f.c.get("/api/v1/access-log", params={"method": "FAX"}).status_code == 422
+
+
+# ------------------------------------------------------------------ temporary and single-use passes
+def test_temporary_pass_expires_after_valid_minutes(f, flow, door, entrance):
+    from datetime import datetime
+
+    eng, _card, _req = flow.authorized()
+    out = issue(f, eng["id"], valid_minutes=120)
+    expires = datetime.fromisoformat(out["expires_at"])
+    assert abs((expires - utcnow()).total_seconds() - 7200) < 60  # the server's clock decides
+    assert out["single_use"] is False
+
+    st = f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")
+    assert st["active"] is True and st["expired"] is False and st["single_use"] is False
+    assert datetime.fromisoformat(st["expires_at"]) == expires
+
+    # Same pass, but its time is up: still ACTIVA in the table, yet it opens nothing.
+    with SessionLocal() as db:
+        db.execute(update(QrCredential).values(expires_at=utcnow() - timedelta(seconds=1)))
+        db.commit()
+    assert f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")["expired"] is True
+    assert scan(f.c, out["qr_text"])["reason_code"] == "QR_EXPIRED"
+
+
+def test_pass_options_are_validated(f, flow):
+    eng = flow.engineer(face=False)
+    url = f"/api/v1/engineers/{eng['id']}/qr"
+    in_an_hour = (utcnow() + timedelta(hours=1)).isoformat()
+    assert f.c.post(url, json={"valid_minutes": 4}).status_code == 422  # below the 5-minute floor
+    assert f.c.post(url, json={"valid_minutes": 60 * 24 * 30 + 1}).status_code == 422
+    assert f.c.post(url, json={"valid_minutes": 60, "expires_at": in_an_hour}).status_code == 422
+    r = f.c.post(url, json={"single_use": True})  # a permanent single-use pass would stay a bearer token
+    assert r.status_code == 422 and r.json()["error"]["code"] == "QR_SINGLE_USE_NEEDS_EXPIRY"
+    assert f.ok("GET", url)["active"] is False  # nothing was issued by the failed attempts
+    ok = f.ok("POST", url, 201, json={"single_use": True, "expires_at": in_an_hour})
+    assert ok["single_use"] is True and ok["expires_at"] is not None
+
+
+def test_single_use_pass_is_consumed_by_the_first_granted_scan(f, flow, door, entrance):
+    eng, _card, _req = flow.authorized()
+    out = issue(f, eng["id"], valid_minutes=60, single_use=True)
+    assert out["single_use"] is True
+    assert f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")["single_use"] is True
+
+    first = scan(f.c, out["qr_text"])
+    assert first["result"] == "GRANTED" and first["display_name"] == eng["full_name"]
+    assert poll(door)["result"] == "GRANTED"  # the LED signal is still delivered
+
+    # Spent: showing the same code again is refused with its own reason and raises an alert.
+    again = scan(f.c, out["qr_text"])
+    assert again["result"] == "DENIED" and again["reason_code"] == "QR_USED" and "display_name" not in again
+    assert f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")["active"] is False
+    assert "qr.consumed" in flow.audit_actions(entity="qr_credential")
+    assert any(a["type"] == "QR_BLOCKED" for a in f.ok("GET", "/api/v1/alerts")["items"])
+    with SessionLocal() as db:
+        cred = db.execute(select(QrCredential)).scalar_one()
+        assert cred.status == "REVOCADA" and cred.revoked_at is not None and cred.revoked_by is None
+
+
+def test_a_denied_scan_does_not_burn_a_single_use_pass(f, flow, door, entrance):
+    eng, _card, _req = flow.authorized()
+    out = issue(f, eng["id"], valid_minutes=60, single_use=True)
+    _set_device(status=DeviceStatus.OFFLINE)  # the door cannot light its LED: DENIED, pass untouched
+    assert scan(f.c, out["qr_text"])["reason_code"] == "DEVICE_OFFLINE"
+    assert f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")["active"] is True
+    _set_device(status=DeviceStatus.ONLINE, last_seen_delta_s=0)
+    assert scan(f.c, out["qr_text"])["result"] == "GRANTED"
+    assert scan(f.c, out["qr_text"])["reason_code"] == "QR_USED"
+
+
+def test_a_permanent_or_plain_temporary_pass_is_reusable(f, flow, door, entrance):
+    eng, _card, _req = flow.authorized()
+    temp = issue(f, eng["id"], valid_minutes=60)
+    assert [scan(f.c, temp["qr_text"])["result"] for _ in range(3)] == ["GRANTED"] * 3
+    perm = issue(f, eng["id"])
+    assert [scan(f.c, perm["qr_text"])["result"] for _ in range(2)] == ["GRANTED"] * 2
+    assert f.ok("GET", f"/api/v1/engineers/{eng['id']}/qr")["active"] is True
+
+
+def test_a_revoked_single_use_pass_that_was_never_used_says_revoked_not_used(f, flow, door, entrance):
+    eng, _card, _req = flow.authorized()
+    out = issue(f, eng["id"], valid_minutes=60, single_use=True)
+    f.ok("DELETE", f"/api/v1/engineers/{eng['id']}/qr", 204)
+    assert scan(f.c, out["qr_text"])["reason_code"] == "QR_REVOKED"

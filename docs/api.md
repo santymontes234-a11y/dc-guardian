@@ -36,8 +36,8 @@ WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 | GET · POST · DELETE | `/engineers/{pk}/face` | Perfil biométrico · registrar muestras (multipart `images`, 3–5) · borrar todas |
 | DELETE | `/engineers/{pk}/face/{sample_id}` | Borrar una muestra |
 | POST | `/vision/quality` | Multipart `image`: indica si hay un único rostro, nitidez, iluminación y tamaño |
-| POST | `/engineers/{pk}/qr` | Emite la credencial QR de la entrada principal (solo `admin`). Cuerpo opcional `{expires_at}`. `201 {qr_text, prefix, expires_at, engineer:{id, full_name, position}}`. El `qr_text` (`DCG-QR1:<token>`) se devuelve **una sola vez**; solo se guarda su SHA-256. Revoca el QR anterior. `409 ENGINEER_NOT_ACTIVE` si el ingeniero no está `ACTIVO` |
-| GET | `/engineers/{pk}/qr` | `{active, prefix, created_at, expires_at, last_used_at}`, nunca el token (solo `admin`) |
+| POST | `/engineers/{pk}/qr` | Emite la credencial QR de la entrada principal (solo `admin`). Cuerpo opcional: sin cuerpo = permanente; `{valid_minutes}` (5 a 43200, contados desde ahora con el reloj del servidor) o `{expires_at}` (no ambos) = **pase temporal**; `{single_use: true}` = el primer acceso concedido lo consume (exige vencimiento: `422 QR_SINGLE_USE_NEEDS_EXPIRY`). `201 {qr_text, prefix, expires_at, single_use, engineer:{id, full_name, position}}`. El `qr_text` (`DCG-QR1:<token>`) se devuelve **una sola vez**; solo se guarda su SHA-256. Revoca el QR anterior. `409 ENGINEER_NOT_ACTIVE` si el ingeniero no está `ACTIVO` |
+| GET | `/engineers/{pk}/qr` | `{active, expired, single_use, prefix, created_at, expires_at, last_used_at}`, nunca el token (solo `admin`). `expired` es `true` si sigue `ACTIVA` en la base pero ya pasó su vencimiento |
 | DELETE | `/engineers/{pk}/qr` | `204`: revoca el QR activo · `404 QR_NOT_FOUND` si no hay ninguno. Borrar los datos del ingeniero también lo revoca |
 
 El QR **identifica, no autoriza**: cada escaneo exige además una solicitud `APROBADA` vigente (Registro 2).
@@ -73,6 +73,8 @@ El QR **identifica, no autoriza**: cada escaneo exige además una solicitud `APR
 | GET | `/stats/dashboard` | Ingenieros (por estado y quién está dentro), solicitudes, accesos, salidas y denegaciones en 24 h, denegaciones por motivo, alertas abiertas, dispositivos, últimos intentos |
 | GET | `/audit` · `/audit/verify` | Auditoría encadenada con HMAC · verificación de la cadena |
 | GET | `/system/kiosk-token` | Token del kiosco (solo `admin`) |
+| GET | `/system/notifications` | `{telegram:{configured, min_severity, site_name}}` (solo `admin`). Nunca devuelve el token ni el chat id |
+| POST | `/system/notifications/test` | Envía un mensaje de prueba a Telegram (solo `admin`, auditado). `200 {sent: true}` · `409 NOTIFICATIONS_NOT_CONFIGURED` · `502 NOTIFY_FAILED` |
 | GET | `/monitoring/environment/latest` | Última lectura del DHT11: `{device_code, area, temperature_c, humidity_pct, sensor, fan, alarm, conditions, at, thresholds:{temp_high_c, temp_critical_c, humidity_low_pct, humidity_high_pct, fan_off_below_c}}`. `?device_code=` opcional |
 | GET | `/monitoring/environment?minutes=60` | `{minutes, items:[{at, temperature_c, humidity_pct}]}`, del más antiguo al más reciente. `minutes` 1–10080; como máximo 1440 puntos (se submuestrea) |
 
@@ -128,7 +130,7 @@ en `AWAITING_FACE` para que el kiosco reintente. `FACE_MISMATCH` y `LIVENESS_FAI
 ```
 
 Comprobaciones en este orden (la primera que falla deniega): `QR_INVALID` (formato distinto de `DCG-QR1:<32 car.>`),
-`QR_UNKNOWN`, `QR_REVOKED`, `QR_EXPIRED`, `ENGINEER_INACTIVE`, Registro 2 (los mismos códigos que la puerta:
+`QR_UNKNOWN`, `QR_REVOKED`, `QR_USED` (pase de un solo uso ya gastado), `QR_EXPIRED`, `ENGINEER_INACTIVE`, Registro 2 (los mismos códigos que la puerta:
 `NO_VALID_AUTH`, `REQUEST_PENDING`, `AUTH_NOT_STARTED`, `AUTH_EXPIRED`, `AUTH_REVOKED`, `AUTH_REJECTED`) y
 `DEVICE_OFFLINE` (el dispositivo `DCG_ENTRANCE_DEVICE_CODE` no está `ONLINE` o lleva más de `DCG_DEVICE_OFFLINE_S`
 sin latido). Para Registro 2 vale una solicitud vigente para **cualquier área** del centro: todas están detrás de la
@@ -207,7 +209,7 @@ Formato: `{"type", "ts", "data"}`. Los eventos se publican **después del commit
 | `SESSION_SUPERSEDED` | Otra tarjeta en la misma puerta cancela el intento anterior | — |
 | `NOBODY_INSIDE` | Botón de salida pulsado sin nadie dentro | — |
 | `QR_INVALID` · `QR_UNKNOWN` | QR con formato inválido · no registrado (entrada principal) | `UNKNOWN_QR` WARN (deduplicada 60 s) |
-| `QR_REVOKED` · `QR_EXPIRED` | QR revocado · vencido | `QR_BLOCKED` WARN |
+| `QR_REVOKED` · `QR_EXPIRED` · `QR_USED` | QR revocado · vencido · pase de un solo uso ya utilizado | `QR_BLOCKED` WARN |
 | `DEVICE_OFFLINE` | El dispositivo de la entrada no está en línea | — (ya existe `DEVICE_OFFLINE`) |
 
 Otras alertas:

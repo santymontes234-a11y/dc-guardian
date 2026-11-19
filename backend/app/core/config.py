@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 from urllib.parse import urlsplit
 from functools import lru_cache
@@ -21,6 +22,10 @@ log = logging.getLogger(__name__)
 
 # ≈ 32 random bytes in URL-safe base64 (secrets.token_urlsafe(32) gives 43 chars).
 MIN_SECRET_LEN = 43
+
+# BotFather token ("123456789:AAH...") and chat id (numeric, negative for groups) or @channel.
+TELEGRAM_TOKEN_RE = re.compile(r"\d{6,12}:[A-Za-z0-9_-]{30,50}")
+TELEGRAM_CHAT_RE = re.compile(r"-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31}")
 
 
 class Settings(BaseSettings):
@@ -86,6 +91,14 @@ class Settings(BaseSettings):
     humidity_low_pct: float = Field(default=20, ge=0, le=100)
     humidity_high_pct: float = Field(default=80, ge=0, le=100)
     environment_retention_days: int = Field(default=7, ge=1, le=365)
+    # --- Telegram notifications: alerts → a chat. Token and chat id both unset = disabled.
+    # The bot token is a secret: set it only in backend/.env, never in code or in git.
+    site_name: str = Field(default="Telecom Conecta", min_length=1, max_length=60)
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
+    telegram_min_severity: Literal["INFO", "WARN", "CRITICAL"] = "WARN"
+    telegram_timeout_s: float = Field(default=5, ge=1, le=30)
+    telegram_rate_per_minute: int = Field(default=20, ge=1, le=60)
     # Kiosk (face camera next to the door). None in dev/test → derived from DCG_MASTER_KEY.
     kiosk_token: str | None = None
     # Simulation: where the virtual ESP32 sends its signed requests (this same backend).
@@ -126,6 +139,15 @@ class Settings(BaseSettings):
         if self.humidity_high_pct <= self.humidity_low_pct:
             raise ValueError("DCG_HUMIDITY_HIGH_PCT must be > DCG_HUMIDITY_LOW_PCT")
         self.entrance_device_code = self.entrance_device_code.upper()
+        # Telegram: a blank value in .env means "not configured". Errors never echo the token.
+        self.telegram_bot_token = (self.telegram_bot_token or "").strip() or None
+        self.telegram_chat_id = (self.telegram_chat_id or "").strip() or None
+        if bool(self.telegram_bot_token) != bool(self.telegram_chat_id):
+            raise ValueError("DCG_TELEGRAM_BOT_TOKEN and DCG_TELEGRAM_CHAT_ID must be set together")
+        if self.telegram_bot_token and not TELEGRAM_TOKEN_RE.fullmatch(self.telegram_bot_token):
+            raise ValueError("DCG_TELEGRAM_BOT_TOKEN does not look like a BotFather token ('<digits>:<token>')")
+        if self.telegram_chat_id and not TELEGRAM_CHAT_RE.fullmatch(self.telegram_chat_id):
+            raise ValueError("DCG_TELEGRAM_CHAT_ID must be a numeric chat id or a @channelname")
         # The virtual ESP32 signs real device requests: they must never leave this machine.
         sim_host = urlsplit(self.sim_base_url).hostname
         if sim_host not in ("127.0.0.1", "localhost", "::1"):

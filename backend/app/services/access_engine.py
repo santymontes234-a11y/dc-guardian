@@ -81,6 +81,7 @@ REASON_TEXT: dict[str, str] = {
     "QR_UNKNOWN": "El código QR no está registrado",
     "QR_REVOKED": "El código QR fue revocado",
     "QR_EXPIRED": "El código QR ha vencido",
+    "QR_USED": "El pase de un solo uso ya fue utilizado",
     "DEVICE_OFFLINE": "El dispositivo de la entrada no está en línea",
 }
 

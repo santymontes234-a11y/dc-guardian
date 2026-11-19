@@ -1,6 +1,6 @@
 // Credencial QR imprimible de Telecom Conecta (contrato QR + DHT11 §2).
 //   import { drawCredential, credentialBlob } from "/js/qr-credential.js";
-//   const canvas = drawCredential({ qrText, name, position, engineerCode, prefix, issuedAt, expiresAt });
+//   const canvas = drawCredential({ qrText, name, position, engineerCode, prefix, issuedAt, expiresAt, singleUse });
 // Todo se dibuja en un <canvas> con fillText (sin HTML: el texto del servidor no puede inyectar
 // marcado). El QR se genera en el navegador con qrcode-generator (vendorizado, sin red).
 import qrcode from "/vendor/qrcode-generator-2.0.4/qrcode.mjs";
@@ -25,6 +25,11 @@ function fmtDay(iso) {
   return new Date(iso).toLocaleDateString("es", { day: "2-digit", month: "long", year: "numeric" });
 }
 
+function fmtDayTime(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString("es", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 /** Matriz del QR (corrección de errores M, versión automática). */
 export function qrMatrix(text) {
   const qr = qrcode(0, "M");
@@ -34,7 +39,7 @@ export function qrMatrix(text) {
   return { n, dark: (r, c) => qr.isDark(r, c) };
 }
 
-export function drawCredential({ qrText, name, position, engineerCode, prefix, issuedAt, expiresAt }) {
+export function drawCredential({ qrText, name, position, engineerCode, prefix, issuedAt, expiresAt, singleUse = false }) {
   const canvas = document.createElement("canvas");
   canvas.width = W;
   canvas.height = H;
@@ -97,7 +102,13 @@ export function drawCredential({ qrText, name, position, engineerCode, prefix, i
   ctx.fillStyle = "#3d4757";
   ctx.fillText(`Emitida: ${fmtDay(issuedAt) ?? "—"}`, W / 2, y);
   y += 32;
-  ctx.fillText(`Vence: ${fmtDay(expiresAt) ?? "sin vencimiento"}`, W / 2, y);
+  ctx.fillText(`Vence: ${fmtDayTime(expiresAt) ?? "sin vencimiento"}`, W / 2, y);
+  if (singleUse) {
+    y += 34;
+    ctx.fillStyle = "#9a3412";
+    ctx.font = "700 21px system-ui, sans-serif";
+    ctx.fillText("PASE DE UN SOLO USO", W / 2, y);
+  }
 
   // Pie
   ctx.fillStyle = "#eef0f3";

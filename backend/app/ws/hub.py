@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session
@@ -34,7 +34,15 @@ class EventHub:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._clients: set[asyncio.Queue] = set()
         self._lock = threading.Lock()
+        self._listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self.history: list[dict] = []  # last events, for tests and late-joining dashboards
+
+    def add_listener(self, fn: Callable[[str, dict[str, Any]], None]) -> None:
+        """Server-side subscriber (e.g. Telegram). It runs in the publishing thread after the
+        commit, so it must return quickly and never raise (exceptions are logged and ignored)."""
+        with self._lock:
+            if fn not in self._listeners:
+                self._listeners.append(fn)
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -63,6 +71,12 @@ class EventHub:
         with self._lock:
             self.history.append(evt)
             del self.history[:-100]
+            listeners = list(self._listeners)
+        for fn in listeners:
+            try:
+                fn(type_, data)
+            except Exception:  # noqa: BLE001 — a listener must never break the commit or the UI
+                log.exception("Event listener failed")
         loop = self._loop
         if loop is None or loop.is_closed():
             return

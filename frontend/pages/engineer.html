@@ -82,9 +82,23 @@
           <button type="button" class="btn btn-danger" id="qr-revoke" hidden>Revocar</button>
         </div>
       </div>
+      <div class="qr-options admin-only" id="qr-options">
+        <label for="qr-kind"><span>Tipo de credencial</span>
+          <select id="qr-kind">
+            <option value="">Permanente (sin vencimiento)</option>
+            <option value="60">Pase temporal · 1 hora</option>
+            <option value="240">Pase temporal · 4 horas</option>
+            <option value="1440">Pase temporal · 24 horas</option>
+            <option value="10080">Pase temporal · 7 días</option>
+          </select>
+        </label>
+        <label class="qr-single"><input type="checkbox" id="qr-single" disabled>
+          <span>Un solo uso (visitas y proveedores): se invalida con el primer acceso concedido</span></label>
+      </div>
       <div id="qr-status"><p class="muted" style="margin:0">Cargando…</p></div>
       <p class="muted small-note">Da acceso solo a la <b>entrada principal</b> y únicamente con una autorización aprobada y vigente.
-        El código completo se muestra una sola vez al generarlo; emitir uno nuevo revoca el anterior.</p>
+        El código completo se muestra una sola vez al generarlo; emitir uno nuevo revoca el anterior.
+        Para proveedores y visitas use un <b>pase temporal</b>: vence solo y, de un solo uso, no sirve si alguien fotografía el código.</p>
     </section>
 
     <section class="card en-danger admin-only" id="danger">
