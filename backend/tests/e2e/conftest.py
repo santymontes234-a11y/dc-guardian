@@ -13,11 +13,9 @@ from app.db.session import SessionLocal
 from app.db.types import utcnow
 from app.main import app as fastapi_app
 from app.models import AuthorizationRequest
-from app.sim import service as sim_service
 from app.ws.hub import hub
+from tests.e2e import esp32_sim
 from tests.faces import capture, files, person
-
-esp32_sim = sim_service.esp32_sim  # the very same module the CLI and the web panel use
 
 DOOR_THRESHOLD_CM = 50
 
@@ -25,7 +23,6 @@ DOOR_THRESHOLD_CM = 50
 @pytest.fixture(autouse=True)
 def _clean_hub():
     hub.history.clear()
-    sim_service.reset()
     yield
 
 

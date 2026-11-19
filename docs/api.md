@@ -10,7 +10,7 @@
 | Local (`uvicorn`) | `http://localhost:8000/api/v1` | `--host 0.0.0.0` para que llegue el ESP32 de la LAN |
 | Docker (`docker compose up`) | `http://localhost:${DCG_PORT:-8000}/api/v1` | Un solo contenedor sirve la API, `/ws/events` y el frontend en el mismo origen |
 
-Los cuerpos de `/device/*` están limitados a 4 KiB (`413 PAYLOAD_TOO_LARGE`). `GET /health` no requiere autenticación: `{"status": "ok", "simulation": bool}`. Lo usa el
+Los cuerpos de `/device/*` están limitados a 4 KiB (`413 PAYLOAD_TOO_LARGE`). `GET /health` no requiere autenticación: `{"status": "ok"}`. Lo usa el
 healthcheck de Docker. Detrás de un proxy HTTPS, este debe reenviar `Upgrade`/`Connection` para el
 WebSocket y el backend debe correr con `DCG_COOKIE_SECURE=true`.
 
@@ -160,21 +160,6 @@ y `POST /device/event`. Contrato completo y firma de las respuestas en [protocol
   como `ERROR`; con el sensor en error, `fan` y `alarm` son `false`.
 - `heartbeat.config` incluye `temp_high_c`, `temp_critical_c`, `humidity_low_pct` y `humidity_high_pct`; `heartbeat.sensors`
   acepta `dht` (se muestra en `/devices/status/all`; su fallo se alerta como `SENSOR_DHT_ERROR`, no `SENSOR_FAULT`).
-
-### Simulación (solo con `DCG_SIMULATION=true`, rol `admin`)
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/sim/state` | Puertas virtuales y tarjetas registradas |
-| POST | `/sim/{device}/distance` · `/sensors` · `/online` · `/heartbeat` | Mover a la persona, simular un fallo del HC-SR04, desconectar el ESP32, enviar un latido |
-| POST | `/sim/{device}/card` · `/face` · `/poll` · `/close` | Pasar tarjeta, enviar rostro sintético (`match`, `other` o `stranger`), sondear la decisión, cerrar el servo |
-| POST | `/sim/enroll-demo-faces` | Registra un rostro sintético a cada ingeniero activo sin rostro |
-| POST | `/sim/{device}/environment` | Lectura del DHT11 virtual `{temperature_c, humidity_pct, sensor}`; el ESP32 virtual aplica `fan`/`alarm` |
-| POST | `/sim/{device}/entrance-poll` | Un poll de la señal de la entrada: enciende el LED virtual (`GREEN` / `RED_BLINK`) y confirma |
-
-`GET /sim/state` incluye por dispositivo `entrance_led`, `fan`, `env_alarm` y `last_env`.
-
-El ESP32 virtual envía **peticiones HTTP firmadas reales** al propio gateway (`DCG_SIM_BASE_URL`).
 
 ## Tiempo real — `WS /ws/events`
 

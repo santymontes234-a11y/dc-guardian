@@ -32,7 +32,7 @@ maqueta, con una pantalla **LCD 2004** que informa del estado.
 9. [Instalación con Docker](#9-instalación-con-docker)
 10. [Firmware ESP32](#10-firmware-esp32)
 11. [Uso del sistema](#11-uso-del-sistema)
-12. [Modo simulación y demo guiada](#12-modo-simulación-y-demo-guiada)
+12. [Demo guiada con el hardware](#12-demo-guiada-con-el-hardware)
 13. [Tests](#13-tests)
 14. [Seguridad](#14-seguridad)
 15. [Capturas de pantalla](#15-capturas-de-pantalla)
@@ -99,7 +99,6 @@ factores, y cada entrada queda registrada. DC Guardian representa ese problema a
 | Bitácora y logs | Bitácora de accesos por zona y método (`QR`, `RFID+ROSTRO`, `BOTON_SALIDA`) y auditoría encadenada verificable desde la interfaz |
 | Alertas | Tarjeta o QR desconocidos, fallos repetidos (bloqueo), ingeniero inactivo, rostro no coincidente, intrusión, ambiente fuera de rango, sensor caído, dispositivo sin conexión, firma inválida… |
 | Avisos por Telegram | Cada alerta de nivel `WARN` o superior (configurable) llega también a un chat de Telegram: temperatura, intrusión, QR o tarjeta no válidos… Se activa con `DCG_TELEGRAM_BOT_TOKEN` y `DCG_TELEGRAM_CHAT_ID` en `backend/.env`; el envío es asíncrono, con tope por minuto, y un fallo de Telegram nunca afecta al control de acceso. Botón de prueba en **Alertas** |
-| Simulación | ESP32 virtual que firma peticiones reales y rostros sintéticos: se prueba todo sin hardware |
 
 ## 3. Arquitectura
 
@@ -176,19 +175,17 @@ Docker sin acceso a `/dev/video0`. Detalles en [docs/architecture.md](docs/archi
 │   │                        · credenciales QR, eventos de la entrada, lecturas del DHT11
 │   ├── app/services/        dominio: access_engine (decisión multifactor), entrance y qr (entrada QR),
 │   │                        environment (DHT11), access_log (bitácora), alerts, biometrics, requests, ...
-│   ├── app/vision/          FaceProvider: InsightFace (real) y Mock (simulación)
+│   ├── app/vision/          FaceProvider: InsightFace (real) y Mock (solo pruebas)
 │   ├── app/api/v1/          routers REST, incluido el gateway del ESP32 (device_gateway) y el kiosco
 │   ├── app/ws/              eventos en tiempo real (/ws/events)
-│   ├── app/sim/             puertas virtuales del panel Simulador
 │   ├── app/db/migrations/   migraciones Alembic (0001–0006)
 │   ├── scripts/             seed, create_admin
 │   ├── tests/               unitarios y de módulo · tests/e2e: flujos completos
 │   ├── pyproject.toml       dependencias (fuente de verdad) · uv.lock
 │   └── requirements.lock.txt  lock exportado (lo instala Docker)
-├── frontend/                HTML/CSS/JS sin build: login, panel, gestión, bitácora, simulador, kiosco y entrada QR
+├── frontend/                HTML/CSS/JS sin build: login, panel, gestión, bitácora, kiosco y entrada QR
 │   └── vendor/              jsQR y qrcode-generator (sin CDN)
 ├── firmware/esp32-door/     ESP32 (PlatformIO): RC522, HC-SR04, SG90, LCD 2004, DHT11, LED de la entrada, ventilador, HMAC, NTP
-├── simulator/               esp32_sim.py: ESP32 virtual (solo biblioteca estándar)
 ├── docker/                  entrypoint del contenedor
 ├── docs/                    arquitectura, API, hardware, instalación, protocolo, pruebas
 ├── screenshots/             capturas reales del dashboard
@@ -260,7 +257,7 @@ backend/.venv/bin/pip install -r requirements-dev.txt
 #    (alternativa reproducible con uv: cd backend && uv sync --python 3.12 --extra vision)
 
 # 3. Configuración
-cp backend/.env.example backend/.env           # DCG_SIMULATION=true por defecto
+cp backend/.env.example backend/.env
 
 # 4. Base de datos y datos de demostración
 cd backend
@@ -269,7 +266,7 @@ cd backend
 .venv/bin/python -m scripts.create_admin admin --name "Administrador"
 
 # 5. Backend + frontend (el mismo proceso sirve frontend/)
-DCG_SIMULATION=true .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000   # con el ESP32 físico: --host 0.0.0.0
 ```
 
 La semilla carga el escenario Telecom Conecta: las áreas `ENTRADA_PRINCIPAL` y `SALA_SERVIDORES`
@@ -283,9 +280,9 @@ ingenieros de demostración.
 **Atajo: `./run.sh`** hace los pasos 2 a 5 con un solo comando. Comprueba el venv, instala
 solo las dependencias que falten, migra la base de datos y carga la semilla solo si la BD está
 vacía. Si no hay administrador, ofrece crearlo. Después arranca el backend y espera a que
-responda `/api/v1/health`. Por defecto arranca en simulación; `Ctrl+C` lo detiene todo y una
+responda `/api/v1/health`. `Ctrl+C` lo detiene todo y una
 segunda ejecución simultánea se rechaza. Opciones: `--port N`, `--lan` (para el ESP32 físico),
-`--real` (InsightFace real), `--reload` y `--help`.
+`--reload` y `--help`.
 
 - Aplicación web: <http://localhost:8000>. Inicia sesión con el administrador creado.
 - API interactiva: <http://localhost:8000/docs>
@@ -293,7 +290,7 @@ segunda ejecución simultánea se rechaza. Opciones: `--port N`, `--lan` (para e
 
 **Webcam y reconocimiento facial real**:
 
-1. Arranca con `DCG_SIMULATION=false`. La primera vez se descargan ~300 MB de modelos en `data/models`.
+1. Arranca el backend con normalidad. La primera vez se descargan ~300 MB de modelos en `data/models`.
 2. Registra los rostros desde la ficha de cada ingeniero.
 3. Abre el kiosco en el PC de la puerta: `http://localhost:8000/pages/kiosk.html?device=DC-DOOR-01`.
 4. Para la entrada principal, abre `http://localhost:8000/pages/entrance.html?device=DC-DOOR-01`
@@ -309,8 +306,8 @@ Configuración: [backend/.env.example](backend/.env.example).
   guardan en `data/.dev_keys.json` (permisos 600).
 - **Producción** (`DCG_ENV=prod`):
   - `DCG_JWT_SECRET` y `DCG_MASTER_KEY` son obligatorias.
-  - Hay que definir `DCG_SIMULATION=false`, `DCG_FACE_PROVIDER=insightface` y `DCG_COOKIE_SECURE=true`.
-  - El backend se niega a arrancar con simulación o con el proveedor facial mock.
+  - Hay que definir `DCG_FACE_PROVIDER=insightface` y `DCG_COOKIE_SECURE=true`.
+  - El backend se niega a arrancar con el proveedor facial mock.
   - `DCG_KIOSK_TOKEN`, si se define, necesita al menos 43 caracteres.
 - El extra `vision` (numpy, OpenCV, onnxruntime, InsightFace) es necesario: el backend lo importa al arrancar.
 
@@ -411,52 +408,39 @@ Guía completa en [docs/installation.md §4](docs/installation.md#4-firmware-esp
 11. **Registro de eventos:** *Accesos* (bitácora por zona y método, con motivo y puntuación
     facial), *Alertas* (atender) y *Auditoría* (todas las acciones; *Verificar cadena de hashes*).
 
-## 12. Modo simulación y demo guiada
+## 12. Demo guiada con el hardware
 
-Con `DCG_SIMULATION=true` (por defecto en el compose y en `.env.example`) no hace falta hardware.
-La página *Simulador* controla un ESP32 virtual que envía **peticiones HTTP firmadas reales** al
-mismo gateway que usa la placa, y los rostros son sintéticos (proveedor `mock`).
+Todo funciona con el **ESP32 físico** (RC522, HC-SR04, SG90, DHT11, LCD 2004 y LEDs) y la webcam
+del PC. Antes: backend con `--host 0.0.0.0` (`./run.sh --lan`), firmware cargado con el secreto del
+dispositivo (README del firmware) y rostros registrados desde la ficha de cada ingeniero.
 
-1. **Simulador → Rostros de demostración**: registra un rostro sintético a los ingenieros de la semilla.
-2. **Solicitudes → Nueva solicitud** para `ENG-0001` con la tarjeta `04A1B2C3`, en el área *Sala de servidores*
+1. **Solicitudes → Nueva solicitud** para `ENG-0001` con su tarjeta, en el área *Sala de servidores*
    y con inicio ahora. Después, **Aprobar**.
-3. **Entrada principal (QR)**:
-   1. En **Ingenieros → ENG-0001 → Credencial QR**, pulsa **Generar QR** y **Copiar texto (demostración)**.
-   2. Abre **Entrada QR** (`/pages/entrance.html`), pega el texto en *Texto del QR* y pulsa
-      **Validar** (o enseña el QR impreso a la webcam, tras **Activar cámara**): *ACCESO PERMITIDO*.
-   3. En **Simulador → 4 · Entrada principal (QR)**, **Leer señal de entrada** (o activa el sondeo
-      automático): el LED verde virtual se enciende. Un QR inventado o revocado da *QR DENEGADO*.
-4. **Sala de servidores (Simulador)**:
-   1. Elegir la tarjeta `04A1B2C3` y pulsar **Pasar tarjeta**: el estado pasa a *Esperando rostro*.
-   2. **Rostro del titular**: *ACCESO CONCEDIDO*, el servo se abre 5 s y se cierra solo.
-   3. **Pasar tarjeta** otra vez y después **Rostro del titular**: se registra la **salida**. Exige rostro, pero no autorización.
-5. **Alarmas de la sala (Simulador)**:
-   - **Alguien en la sala (10 cm)** sin nadie dentro: alerta `INTRUSION` y alarma en el ESP32 virtual.
-   - **5 · Sala de servidores — DHT11**: **Calor (30 °C)** enciende el ventilador
-     (`TEMPERATURA_ALTA`); **Crítica (35 °C)** activa la alarma (`TEMPERATURA_CRITICA`); *Sensor con
-     fallo* genera `SENSOR_DHT_ERROR`. La tarjeta del DHT11 del panel se actualiza en vivo.
-6. Para probar denegaciones:
-   - **Rostro de otro ingeniero** o **Persona desconocida**.
-   - El UID `0BADC0DE` (tarjeta no registrada).
-   - Desmarcar **HC-SR04 responde** (`SENSOR_FAULT`) o **ESP32 conectado**; a los ~50 s aparece `DEVICE_OFFLINE` y el QR se deniega con ese motivo.
-   - Revocar la solicitud, revocar el QR o suspender al ingeniero.
-7. **Panel**: estado del hardware, ingenieros dentro, accesos, denegaciones por motivo, DHT11, alertas y eventos en tiempo real.
-   **Accesos**: bitácora con las dos zonas (filtros por zona y método). **Auditoría → Verificar cadena de hashes.**
+2. **Entrada principal (QR)**:
+   1. En **Ingenieros → ENG-0001 → Credencial QR**, elige el tipo (permanente o **pase temporal**,
+      con la opción de **un solo uso** para proveedores y visitas) y pulsa **Generar QR**. Imprime o
+      descarga la credencial: el código completo solo se muestra una vez.
+   2. Abre **Entrada QR** (`/pages/entrance.html`) en el PC de recepción, pulsa **Activar cámara** y
+      enseña el QR: *ACCESO PERMITIDO* y se enciende el **LED verde de la entrada** (GPIO 14).
+      Un QR inventado, revocado, vencido o ya usado da *QR DENEGADO* (LED rojo y pitido).
+3. **Sala de servidores**:
+   1. Acerca la tarjeta al RC522: el LCD pasa a *RECONOCIMIENTO FACIAL*.
+   2. Abre el **Kiosco** (`/pages/kiosk.html?device=DC-DOOR-01`) y mira a la cámara: *ACCESO
+      CONCEDIDO*, el servo se abre 5 s y se cierra solo.
+   3. Para salir, pulsa el **botón de salida** interior, o pasa la tarjeta otra vez y verifica el rostro.
+4. **Alarmas de la sala**:
+   - Ponerse frente al HC-SR04 sin nadie autorizado dentro: alerta `INTRUSION`, LED rojo y zumbador.
+   - **DHT11**: calentar el sensor con la mano enciende el ventilador (`TEMPERATURA_ALTA`) y, por encima
+     de 32 °C, la alarma (`TEMPERATURA_CRITICA`). Desconectar DATA genera `SENSOR_DHT_ERROR`.
+5. Para probar denegaciones: una persona distinta a la titular, una tarjeta no registrada (`DEADBEEF`),
+   cortar la red del ESP32 (a los ~45 s aparece `DEVICE_OFFLINE` y el QR se deniega por ese motivo),
+   revocar la solicitud o el QR, o suspender al ingeniero.
+6. **Panel**: estado del hardware, ingenieros dentro, accesos, denegaciones, DHT11, alertas y eventos en
+   tiempo real. **Accesos**: bitácora con las dos zonas. **Auditoría → Verificar cadena de hashes.**
+   Si configuras Telegram, cada alerta llega también al móvil.
 
-Con la webcam real: abre **Kiosco** (`/pages/kiosk.html?device=DC-DOOR-01`) en el PC de la puerta, con la sesión de
-administrador iniciada o con el token de `GET /api/v1/system/kiosk-token`. Si lo abres con `?token=`, la página guarda el token y lo quita de la URL. Para rostros reales hay que arrancar sin
-`DCG_SIMULATION` (proveedor InsightFace; el modelo se descarga en `data/models` la primera vez) y registrar los rostros
-con la cámara desde la ficha del ingeniero.
-
-### ESP32 virtual por línea de comandos
-
-```bash
-python3 simulator/esp32_sim.py --url http://localhost:8000 --device DC-DOOR-01 --secret <secreto> heartbeat
-python3 simulator/esp32_sim.py --url http://localhost:8000 --device DC-DOOR-01 --secret <secreto> access --uid 04A1B2C3
-```
-
-Usa el mismo protocolo firmado que el firmware. Mientras espera la decisión, mira el rostro en el kiosco.
-`python3 simulator/esp32_sim.py --help` lista el resto de subcomandos.
+El kiosco se abre con la sesión de administrador iniciada o con el token de
+`GET /api/v1/system/kiosk-token`; si lo abres con `?token=`, la página guarda el token y lo quita de la URL.
 
 ## 13. Tests
 
@@ -510,14 +494,14 @@ Política de vulnerabilidades: [SECURITY.md](SECURITY.md).
 
 ## 15. Capturas de pantalla
 
-Capturas reales del sistema ejecutándose en Docker en modo simulación, con los datos ficticios
+Capturas reales del sistema ejecutándose en Docker, con los datos ficticios
 de la semilla (`screenshots/`):
 
 | | |
 |---|---|
 | ![Panel](screenshots/01-panel.jpg) Panel de control | ![Ingenieros](screenshots/02-ingenieros.jpg) Registro de ingenieros |
 | ![Solicitudes](screenshots/03-solicitudes.jpg) Solicitudes de acceso | ![Tarjetas](screenshots/04-tarjetas.jpg) Tarjetas RFID |
-| ![Simulador](screenshots/05-simulador.jpg) Simulador del ESP32 | ![Accesos](screenshots/06-accesos.jpg) Registro de accesos |
+| ![Accesos](screenshots/06-accesos.jpg) Registro de accesos | |
 | ![Alertas](screenshots/07-alertas.jpg) Alertas | ![Auditoría](screenshots/08-auditoria.jpg) Auditoría encadenada |
 
 No se incluye el kiosco con cámara: el navegador usado para las capturas no tenía acceso a la webcam.
@@ -528,10 +512,9 @@ la credencial QR ni la tarjeta del DHT11.
 
 | Componente | Estado |
 |---|---|
-| Backend: dominio, motor de acceso, gateway HMAC, alertas, WebSocket, auditoría | ✅ Implementado · 260 tests |
-| Telecom Conecta: credencial y acceso QR en la entrada, DHT11 + ventilador, bitácora por zona y método (migración 0006) | ✅ Implementado y probado en simulación (E2E) |
-| Frontend: panel (con DHT11), ingenieros (con credencial QR), tarjetas, solicitudes, bitácora, alertas, auditoría, simulador, kiosco, entrada QR | ✅ Implementado |
-| Modo simulación (ESP32 virtual + rostros sintéticos) | ✅ Implementado y verificado de extremo a extremo (también en Docker) |
+| Backend: dominio, motor de acceso, gateway HMAC, alertas, WebSocket, auditoría | ✅ Implementado · 298 tests |
+| Telecom Conecta: credencial y acceso QR en la entrada, DHT11 + ventilador, bitácora por zona y método (migración 0006) | ✅ Implementado y probado de extremo a extremo (E2E, con un cliente del protocolo firmado) |
+| Frontend: panel (con DHT11), ingenieros (con credencial QR), tarjetas, solicitudes, bitácora, alertas, auditoría, kiosco, entrada QR | ✅ Implementado |
 | Docker (imagen única + compose + volumen) | ✅ Verificado: build, healthcheck, flujo completo de acceso, persistencia tras reinicio, carga de InsightFace |
 | Reconocimiento facial con InsightFace | 🧪 Experimental: el modelo carga y procesa imágenes; **umbral sin calibrar** con rostros reales |
 | Kiosco con webcam real | 🧪 Implementado; no verificado con cámara en esta entrega |

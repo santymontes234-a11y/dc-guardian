@@ -304,7 +304,6 @@ def test_decompression_bomb_rejected_before_decoding(api, monkeypatch):
     ({"DCG_FACE_MIN_MATCHES": "6", "DCG_FACE_FRAMES": "5"}, "MIN_MATCHES"),
     ({"DCG_FACE_DUPLICATE_THRESHOLD": "0.6"}, "DUPLICATE_THRESHOLD"),
     ({"DCG_ENV": "prod", "DCG_COOKIE_SECURE": "true", "DCG_FACE_PROVIDER": "mock"}, "mock face provider"),
-    ({"DCG_ENV": "prod", "DCG_COOKIE_SECURE": "true", "DCG_SIMULATION": "true"}, "mock face provider"),
 ])
 def test_biometric_settings_cannot_fail_open(monkeypatch, env, error):
     """M3/M4: misconfiguration is refused at startup instead of accepting any face."""

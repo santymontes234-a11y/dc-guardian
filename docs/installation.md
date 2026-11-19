@@ -1,8 +1,8 @@
 # Instalación de DC Guardian
 
 Tres formas de ejecutarlo: **Docker** (recomendada para la demo), **local** con Python 3.12, y
-el **firmware** para el ESP32 físico. En todas ellas, el modo simulación permite probar el flujo
-completo sin hardware.
+el **firmware** para el ESP32 físico. El sistema funciona con el hardware real: la placa habla con el
+backend por HTTP firmado y el reconocimiento facial usa la webcam del PC.
 
 ## 1. Requisitos
 
@@ -60,7 +60,7 @@ la placa real. `create_admin` pide la contraseña de forma interactiva.
 | Elemento | Valor |
 |---|---|
 | Puerto | `8000/tcp` (`DCG_PORT` en `.env` cambia el del host). Publicado en todas las interfaces para que el ESP32 de la LAN llegue al backend |
-| Volumen | `dc-guardian-data` → `/data`: `dcguardian.db`, `.dev_keys.json`, `models/` (InsightFace descarga ~300 MB la primera vez que arranca sin simulación) |
+| Volumen | `dc-guardian-data` → `/data`: `dcguardian.db`, `.dev_keys.json`, `models/` (InsightFace descarga ~300 MB la primera vez que arranca) |
 | Red | `dc-guardian-net` (bridge) |
 | Usuario | `dcg` (uid 10001), sistema de archivos de solo lectura, `no-new-privileges`, sin capabilities |
 | Healthcheck | `GET /api/v1/health` cada 30 s |
@@ -80,9 +80,8 @@ Sin ellas, la BD restaurada no sirve: guárdalas juntas.
 
 | Modo | `.env` | Comportamiento |
 |---|---|---|
-| Demo (por defecto) | `DCG_ENV=dev`, `DCG_SIMULATION=true` | ESP32 virtual (página Simulador) y rostros sintéticos |
-| Rostros reales | `DCG_SIMULATION=false` (o `DCG_FACE_PROVIDER=insightface`) | InsightFace real con el kiosco y la webcam; ESP32 físico o `simulator/esp32_sim.py` |
-| Producción | `DCG_ENV=prod`, `DCG_JWT_SECRET`, `DCG_MASTER_KEY`, `DCG_COOKIE_SECURE=true`, `DCG_SIMULATION=false`, `DCG_FACE_PROVIDER=insightface` (y `DCG_KIOSK_TOKEN` ≥ 43 caracteres si lo defines) | El backend se niega a arrancar si falta algo, si `DCG_SIMULATION=true` o si el proveedor facial es el mock. Requiere HTTPS delante (por ejemplo Nginx o Caddy) |
+| Desarrollo / demo (por defecto) | `DCG_ENV=dev` | InsightFace real con el kiosco y la webcam, y el ESP32 físico |
+| Producción | `DCG_ENV=prod`, `DCG_JWT_SECRET`, `DCG_MASTER_KEY`, `DCG_COOKIE_SECURE=true`, `DCG_FACE_PROVIDER=insightface` (y `DCG_KIOSK_TOKEN` ≥ 43 caracteres si lo defines) | El backend se niega a arrancar si falta algo, o si el proveedor facial es el mock. Requiere HTTPS delante (por ejemplo Nginx o Caddy) |
 
 ## 3. Instalación local (sin Docker)
 
@@ -96,7 +95,7 @@ backend/.venv/bin/pip install -r requirements-dev.txt     # o requirements.txt s
 #    cd backend && ../.tools/bin/uv sync --python 3.12 --extra vision && cd ..
 
 # 2. Configuración
-cp backend/.env.example backend/.env     # DCG_SIMULATION=true por defecto
+cp backend/.env.example backend/.env
 
 # 3. Base de datos y datos de demostración
 cd backend
@@ -113,7 +112,7 @@ El frontend no necesita compilación ni un servidor aparte: FastAPI lo sirve en 
 
 ### Webcam y reconocimiento facial
 
-1. Arranca **sin** simulación: `DCG_SIMULATION=false` en `backend/.env`. La primera vez se
+1. Arranca el backend. La primera vez se
    descarga `buffalo_l` en `data/models` (~300 MB).
 2. Registra el rostro: **Ingenieros → ficha → Registrar rostro**. Pide permiso de cámara y
    toma 3–5 muestras con control de calidad.

@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import secrets
-from urllib.parse import urlsplit
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -37,7 +36,6 @@ class Settings(BaseSettings):
     )
 
     env: Literal["dev", "test", "prod"] = "dev"
-    simulation: bool = False
 
     data_dir: Path = PROJECT_ROOT / "data"
     database_url: str | None = None
@@ -101,11 +99,9 @@ class Settings(BaseSettings):
     telegram_rate_per_minute: int = Field(default=20, ge=1, le=60)
     # Kiosk (face camera next to the door). None in dev/test → derived from DCG_MASTER_KEY.
     kiosk_token: str | None = None
-    # Simulation: where the virtual ESP32 sends its signed requests (this same backend).
-    sim_base_url: str = "http://127.0.0.1:8000"
 
     # --- Face registration (Registro 1) ---
-    face_provider: Literal["auto", "insightface", "mock"] = "auto"  # auto: mock if simulation, else insightface
+    face_provider: Literal["auto", "insightface", "mock"] = "auto"  # auto: insightface (mock only when env=test)
     face_model: str = "buffalo_l"  # fallback buffalo_s if it cannot be loaded
     face_enroll_min_samples: int = Field(default=3, ge=1, le=10)
     face_enroll_max_samples: int = Field(default=5, ge=1, le=10)
@@ -148,10 +144,6 @@ class Settings(BaseSettings):
             raise ValueError("DCG_TELEGRAM_BOT_TOKEN does not look like a BotFather token ('<digits>:<token>')")
         if self.telegram_chat_id and not TELEGRAM_CHAT_RE.fullmatch(self.telegram_chat_id):
             raise ValueError("DCG_TELEGRAM_CHAT_ID must be a numeric chat id or a @channelname")
-        # The virtual ESP32 signs real device requests: they must never leave this machine.
-        sim_host = urlsplit(self.sim_base_url).hostname
-        if sim_host not in ("127.0.0.1", "localhost", "::1"):
-            raise ValueError("DCG_SIM_BASE_URL must point to this machine (127.0.0.1 / localhost)")
         if self.env == "prod":
             missing = [n for n in ("jwt_secret", "master_key") if not getattr(self, n)]
             if missing:
@@ -159,12 +151,9 @@ class Settings(BaseSettings):
             if not self.cookie_secure:
                 raise ValueError("DCG_COOKIE_SECURE must be true in prod")
             # The mock face provider accepts any textured image: never in production.
-            if self.face_provider == "mock" or (self.face_provider == "auto" and self.simulation):
+            if self.face_provider == "mock":
                 raise ValueError("The mock face provider is not allowed in prod "
-                                 "(set DCG_FACE_PROVIDER=insightface and DCG_SIMULATION=false)")
-            # /sim decrypts the real device secrets and can sign as the door: never in production.
-            if self.simulation:
-                raise ValueError("DCG_SIMULATION is not allowed in prod")
+                                 "(set DCG_FACE_PROVIDER=insightface)")
         elif self.env == "test":
             self.jwt_secret = self.jwt_secret or secrets.token_urlsafe(48)
             self.master_key = self.master_key or secrets.token_urlsafe(32)

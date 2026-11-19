@@ -264,10 +264,3 @@ temperatura y la humedad del **Servidor de clientes**.
 
 `status` añade una segunda línea: `dht=OK temp=24.5 hum=51.0 fan=0 env_alarm=0 env_local=0 entrance_led=0 thr_high=27.0 ...`.
 El firmware de diagnóstico (`esp32dev-diag`) añade los comandos `dht`, `fan` y `qrled`.
-
-### Simulador
-
-`simulator/esp32_sim.py` implementa lo mismo con el mismo protocolo firmado:
-`environment(temperature_c, humidity_pct, sensor="OK")`, `entrance_poll()` y las propiedades
-`entrance_led` (`"GREEN"`, `"RED_BLINK"` u `"OFF"`), `fan`, `env_alarm` y `last_env`.
-Desde la línea de comandos: `env --temp 28.5 --hum 45 [--repeat N]`, `env --error` y `entrance --seconds 60`.

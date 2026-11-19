@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # DC Guardian — arranque local completo con un solo comando.
 #
-#   ./run.sh                 modo simulación en http://127.0.0.1:8000
+#   ./run.sh                 arranca el sistema en http://127.0.0.1:8000
 #   ./run.sh --help          todas las opciones
 #
 # Qué hace, en orden (lo mismo que README § 8, automatizado):
@@ -31,7 +31,6 @@ UV="$ROOT_DIR/.tools/bin/uv"
 HOST="127.0.0.1"
 PORT="8000"
 RELOAD=""
-SIM_MODE=""          # "" = respetar entorno / backend/.env (si no lo definen: true)
 SKIP_INSTALL=0
 
 usage() {
@@ -41,14 +40,9 @@ Uso: ./run.sh [opciones]
   --port N        Puerto HTTP (por defecto 8000)
   --host H        Interfaz de escucha (por defecto 127.0.0.1)
   --lan           Escuchar en 0.0.0.0 para que el ESP32 físico de la LAN llegue al backend
-  --sim           Forzar modo simulación (DCG_SIMULATION=true)
-  --real          Forzar reconocimiento facial real (DCG_SIMULATION=false)
   --reload        Recargar el backend al cambiar el código (desarrollo)
   --no-install    No instalar dependencias aunque falten
   -h, --help      Mostrar esta ayuda
-
-Sin --sim/--real se usa DCG_SIMULATION del entorno o de backend/.env; si ninguno lo
-define, se arranca en simulación (como indica el README).
 EOF
 }
 
@@ -57,8 +51,6 @@ while [[ $# -gt 0 ]]; do
     --port)       PORT="${2:?--port necesita un valor}"; shift 2 ;;
     --host)       HOST="${2:?--host necesita un valor}"; shift 2 ;;
     --lan)        HOST="0.0.0.0"; shift ;;
-    --sim)        SIM_MODE="true"; shift ;;
-    --real)       SIM_MODE="false"; shift ;;
     --reload)     RELOAD="--reload"; shift ;;
     --no-install) SKIP_INSTALL=1; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -187,29 +179,20 @@ fi
 env_file_defines() {  # ¿backend/.env define la variable $1?
   [[ -f "$ENV_FILE" ]] && grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$ENV_FILE"
 }
-if [[ -n "$SIM_MODE" ]]; then
-  export DCG_SIMULATION="$SIM_MODE"
-elif [[ -z "${DCG_SIMULATION:-}" ]] && ! env_file_defines DCG_SIMULATION; then
-  export DCG_SIMULATION="true"
-fi
-# El ESP32 virtual se llama a sí mismo: debe apuntar al puerto que se usa ahora.
-if [[ -z "${DCG_SIM_BASE_URL:-}" ]] && ! env_file_defines DCG_SIM_BASE_URL; then
-  export DCG_SIM_BASE_URL="http://127.0.0.1:$PORT"
-fi
 [[ -f "$ENV_FILE" ]] || warn "No existe backend/.env: se usan los valores por defecto (ver backend/.env.example)."
 
 # Validar la configuración ahora da un mensaje claro en vez de un traceback de uvicorn.
 cd "$BACKEND_DIR"
 CONFIG_ERR="$(mktemp)"
-if ! SETTINGS_OUT="$("$PY" -c 'from app.core.config import get_settings as g; s=g(); print(s.env, str(s.simulation).lower())' 2>"$CONFIG_ERR")"; then
+if ! SETTINGS_OUT="$("$PY" -c 'from app.core.config import get_settings as g; s=g(); print(s.env)' 2>"$CONFIG_ERR")"; then
   DETAIL="$(grep -v -E '^(Traceback|  File |    )' "$CONFIG_ERR" | tail -n 8)"
   rm -f "$CONFIG_ERR"
   die "Configuración inválida (revisa backend/.env y las variables DCG_*):
 $DETAIL"
 fi
 rm -f "$CONFIG_ERR"
-read -r DCG_ENV_EFFECTIVE SIM_EFFECTIVE <<<"$SETTINGS_OUT"
-ok "Entorno: $DCG_ENV_EFFECTIVE · simulación: $SIM_EFFECTIVE"
+DCG_ENV_EFFECTIVE="$SETTINGS_OUT"
+ok "Entorno: $DCG_ENV_EFFECTIVE"
 
 # ------------------------------------------------------------------ puerto libre
 port_in_use() {
@@ -304,7 +287,7 @@ echo
 ok "DC Guardian está en marcha (PID $SERVER_PID)."
 cat <<EOF
      Aplicación web   $BASE
-     Simulador ESP32  $BASE/pages/simulator.html
+     Entrada QR       $BASE/pages/entrance.html
      Kiosco facial    $BASE/pages/kiosk.html?device=DC-DOOR-01
      Salud            $HEALTH_URL
 EOF

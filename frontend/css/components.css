@@ -90,7 +90,7 @@ dialog::backdrop { background: rgb(0 0 0 / 40%); }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* LED virtual (entrada principal, simulador). */
+/* LED virtual (entrada principal). */
 .led {
   display: inline-block; width: 18px; height: 18px; border-radius: 50%;
   background: #4b5563; border: 2px solid rgb(0 0 0 / 30%); vertical-align: middle; flex: none;

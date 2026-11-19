@@ -87,20 +87,15 @@ def _settings(**over):
     return Settings(**{**base, **over})
 
 
-def test_prod_rejects_simulation():
-    with pytest.raises(ValueError, match="DCG_SIMULATION"):
-        _settings(simulation=True)
-    assert _settings().simulation is False
+def test_prod_rejects_the_mock_face_provider():
+    with pytest.raises(ValueError, match="mock face provider"):
+        _settings(face_provider="mock")
+    assert _settings().face_provider == "insightface"
 
 
 def test_short_kiosk_token_rejected():
     with pytest.raises(ValueError, match="KIOSK_TOKEN"):
         _settings(kiosk_token="1234")
-
-
-def test_sim_base_url_must_be_local():
-    with pytest.raises(ValueError, match="SIM_BASE_URL"):
-        _settings(env="test", sim_base_url="http://192.168.1.50:8000")
 
 
 # ------------------------------------------------------------------ M4/B5: gateway hardening

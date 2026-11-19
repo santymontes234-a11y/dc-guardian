@@ -1,11 +1,11 @@
-"""Deterministic face provider for simulation and tests (no model, no real recognition).
+"""Deterministic face provider for tests (no model, no real recognition).
 
 - An image "contains a face" when it is not flat (grayscale std > 12): the face is the
   central 60 % of the image, with synthetic frontal landmarks.
 - The embedding is a fixed random projection of the 8×8 downsampled, mean-centered image, so
   the same picture (or a slightly noisy copy) gives the same "identity" and unrelated pictures
   give near-orthogonal embeddings.
-It must never be used to make real access decisions (``DCG_SIMULATION`` only).
+It must never be used to make real access decisions (tests only; production refuses it).
 """
 
 from __future__ import annotations

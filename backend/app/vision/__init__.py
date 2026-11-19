@@ -22,7 +22,7 @@ def _build() -> FaceProvider:
     s = get_settings()
     kind = s.face_provider
     if kind == "auto":
-        kind = "mock" if (s.simulation or s.env == "test") else "insightface"
+        kind = "mock" if s.env == "test" else "insightface"
     if kind == "mock":
         from app.vision.mock_provider import MockFaceProvider
 

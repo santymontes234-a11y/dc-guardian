@@ -1,6 +1,6 @@
 # Contrato: acceso QR en la entrada principal + DHT11 (Telecom Conecta, Parcial 3)
 
-> Fuente de verdad compartida por backend, firmware, simulador y frontend (2026-11-17).
+> Fuente de verdad compartida por backend, firmware y frontend (2026-11-17).
 > Amplía `protocolo-esp32.md` (§10 y §11). Toda petición `/device/*` nueva usa la autenticación
 > HMAC de la §2 de ese documento y su respuesta va firmada. Fail-closed en todo momento.
 
@@ -156,18 +156,11 @@ Alarma:
 - Con `alarm` activa, el buzzer suena con un patrón intermitente distinto del de intrusión.
 - El LCD muestra `TEMP xx.xC HUM yy%` en la pantalla de reposo.
 
-## 5. Simulador (`simulator/esp32_sim.py`, `backend/app/api/v1/sim.py`)
+## 5. Pruebas del protocolo
 
-`SimDevice` añade estos métodos:
-- `environment(temperature_c, humidity_pct, sensor="OK")` → `Reply` (aplica `fan` y `alarm` al estado simulado).
-- `entrance_poll()` → `Reply` (si llega una señal, actualiza `entrance_led` a `"GREEN"` o `"RED_BLINK"` con su vencimiento y envía el ack).
-- Propiedades de estado: `entrance_led`, `fan`, `env_alarm`, `last_env`.
-
-`sim.py` (solo con `DCG_SIMULATION=true`) añade:
-- `POST /sim/{code}/environment` `{temperature_c, humidity_pct, sensor}`
-- `POST /sim/{code}/entrance-poll`
-
-Y `GET /sim/state` incluye por dispositivo `entrance_led`, `fan`, `env_alarm` y `last_env`.
+El backend se prueba con un cliente del protocolo firmado en `backend/tests/e2e/esp32_sim.py`
+(solo para las pruebas E2E). Sus métodos `environment(...)` y `entrance_poll()` reproducen lo que hace
+el firmware. El producto no incluye ningún dispositivo virtual: la puerta es el ESP32 físico.
 
 ## 6. Bitácora
 

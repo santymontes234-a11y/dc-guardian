@@ -13,7 +13,6 @@ from app.api.v1 import (
     system,
     vision,
 )
-from app.core.config import get_settings
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(system.router)
@@ -36,8 +35,3 @@ api_router.include_router(monitoring.system)
 api_router.include_router(monitoring.access_log)
 api_router.include_router(monitoring.environment)
 api_router.include_router(device_gateway.router)
-
-if get_settings().simulation:  # virtual ESP32 control panel — never in production
-    from app.api.v1 import sim
-
-    api_router.include_router(sim.router)

@@ -31,7 +31,7 @@ flowchart TB
 
 | Componente | Tecnología | Responsabilidad |
 |---|---|---|
-| Frontend | HTML/CSS/JS nativos, módulos ES | Login, panel, ingenieros, tarjetas, solicitudes, accesos, alertas, auditoría, simulador, kiosco |
+| Frontend | HTML/CSS/JS nativos, módulos ES | Login, panel, ingenieros, tarjetas, solicitudes, accesos, alertas, auditoría, kiosco |
 | Backend | FastAPI, Pydantic, SQLAlchemy 2, Alembic | Dominio, motor de acceso multifactor, gateway del ESP32, auditoría encadenada |
 | Visión | InsightFace + onnxruntime + OpenCV headless | Calidad de imagen, registro (3–5 muestras), verificación 1:1, liveness básica |
 | Base de datos | SQLite (WAL) | Registro 1, Registro 2, sesiones de acceso, alertas, auditoría |
@@ -133,8 +133,7 @@ flowchart LR
 | MQTT (Mosquitto) | Descartado | El protocolo del ESP32 es HTTP firmado; un broker no añade nada al prototipo |
 | Nginx | Opcional, no incluido | Útil solo para HTTPS (kiosco en otro equipo, `DCG_COOKIE_SECURE=true`) |
 
-Restricción: **una sola réplica y un solo worker**. El hub de WebSocket, el limitador de login y
-las puertas virtuales del simulador viven en la memoria del proceso.
+Restricción: **una sola réplica y un solo worker**. El hub de WebSocket, y el limitador de login viven en la memoria del proceso.
 
 ## 6. Capas del backend
 
@@ -142,8 +141,7 @@ las puertas virtuales del simulador viven en la memoria del proceso.
 app/api/v1/      routers (sin lógica): validación HTTP, dependencias de auth
 app/services/    dominio: access_engine, requests, engineers, biometrics, alerts, audit, scheduler
 app/models/      SQLAlchemy (estados como StrEnum en español: PENDIENTE, APROBADA, ...)
-app/vision/      FaceProvider: InsightFace (real) y Mock (simulación)
+app/vision/      FaceProvider: InsightFace (real) y Mock (solo pruebas)
 app/ws/          hub de eventos (se publican tras el commit)
-app/sim/         ESP32 virtual que firma peticiones reales contra el propio gateway
 app/core/        configuración DCG_*, seguridad (bcrypt, JWT, Fernet, HMAC), errores de dominio
 ```

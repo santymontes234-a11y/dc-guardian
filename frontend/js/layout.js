@@ -23,7 +23,6 @@ export const NAV = [
   { key: "access", label: "Accesos", href: "/pages/access-log.html" },
   { key: "alerts", label: "Alertas", href: "/pages/alerts.html" },
   { key: "audit", label: "Auditoría", href: "/pages/audit.html" },
-  { key: "simulator", label: "Simulador", href: "/pages/simulator.html", simOnly: true },
   { key: "entrance", label: "Entrada QR", href: "/pages/entrance.html", target: "_blank" },
   { key: "kiosk", label: "Kiosco", href: "/pages/kiosk.html", target: "_blank" },
 ];
@@ -39,9 +38,9 @@ function ensureStyles() {
   }
 }
 
-function render(admin, simulation) {
+function render(admin) {
   const current = document.body.dataset.page;
-  const links = NAV.filter((n) => !n.simOnly || simulation)
+  const links = NAV
     .map((n) => `<a href="${n.href}" class="nav-link${n.key === current ? " active" : ""}"${
       n.target ? ` target="${n.target}" rel="noopener"` : ""}>${n.label}</a>`)
     .join("");
@@ -54,7 +53,6 @@ function render(admin, simulation) {
     <nav class="app-nav">${links}</nav>
     <div class="session">
       <time class="clock" id="header-clock"></time>
-      ${simulation ? '<span class="badge badge-info">Simulación</span>' : ""}
       <span class="who">${escapeHtml(admin.full_name)} · ${escapeHtml(admin.role)}</span>
       <button type="button" class="btn btn-ghost" id="logout">Salir</button>
     </div>`;
@@ -71,11 +69,8 @@ function render(admin, simulation) {
 
 async function boot() {
   ensureStyles();
-  const [admin, health] = await Promise.all([
-    api.get("/auth/me"),
-    api.get("/health").catch(() => ({ simulation: false })),
-  ]);
-  render(admin, Boolean(health.simulation));
+  const admin = await api.get("/auth/me");
+  render(admin);
   return admin;
 }
 

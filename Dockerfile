@@ -46,8 +46,7 @@ RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dcg \
 USER dcg
 WORKDIR /app/backend
 
-ENV DCG_DATA_DIR=/data \
-    DCG_SIM_BASE_URL=http://127.0.0.1:8000
+ENV DCG_DATA_DIR=/data
 
 VOLUME ["/data"]
 EXPOSE 8000

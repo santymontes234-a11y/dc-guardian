@@ -13,7 +13,7 @@ cd firmware/esp32-door && ../../backend/.venv/bin/pytest test/integration   # n�
 
 Las pruebas E2E son deterministas:
 - `MockFaceProvider` con rostros sintéticos (`tests/faces.py`).
-- `simulator/esp32_sim.py` (el mismo cliente que la CLI y el panel web) sobre `TestClient`.
+- `backend/tests/e2e/esp32_sim.py`: cliente del protocolo firmado del ESP32, sobre `TestClient`.
 - Firma HMAC real en peticiones y respuestas.
 
 ## Resultados
@@ -68,10 +68,10 @@ firmware de integración (`test/integration`) → **13 aprobadas**.
 | Entrada principal (QR) | `test_entrance_qr.py` (emisión y revocación, orden de denegaciones, límite de 20/min, señal entregada una vez, caducidad a 10 s, respuestas firmadas ligadas al nonce, bitácora QR/RFID), `test_sim_entrance_environment.py` | QR válido con Registro 2 → señal `GRANTED` → LED verde de la entrada y ack. Firmware (`test_entrance`): firma inválida, `id`/`led_ms` erróneos o resultado desconocido ⇒ ignorada; **nunca mueve el servo** |
 | DHT11 | `test_environment.py` (histéresis del ventilador y re-armado de alertas, `TEMPERATURA_CRITICA` sin duplicados, `HUMEDAD_FUERA_DE_RANGO`, `SENSOR_DHT_ERROR`, 422 firmado, respuesta sin firma rechazada, consultas `latest` y serie), `test_entrance_qr.py::test_heartbeat_sends_dht_thresholds_and_accepts_dht_sensor` | El backend decide `fan`/`alarm`. Firmware (`test_environment`): 3 fallos ⇒ `ERROR` y ventilador apagado; firma inválida o sin conexión ⇒ respaldo local con los mismos umbrales |
 
-## Verificación en vivo (servidor real, modo simulación)
+## Verificación en vivo (histórica)
 
-Servidor con `DCG_SIMULATION=true`, base de datos aislada y la semilla.
-Las acciones se hicieron con los botones del **panel Simulador**, que envía peticiones HMAC reales al gateway.
+Se hizo con un servidor real, base de datos aislada y la semilla, usando entonces un panel de simulación que
+enviaba peticiones HMAC reales al gateway. Ese panel se retiró: el sistema se prueba con el ESP32 físico.
 
 | Paso | Observado |
 |---|---|

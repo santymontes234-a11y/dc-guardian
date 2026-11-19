@@ -33,11 +33,8 @@ services:
         required: false
     environment:
       DCG_ENV: ${DCG_ENV:-dev}
-      DCG_SIMULATION: ${DCG_SIMULATION:-true}
       DCG_FACE_PROVIDER: ${DCG_FACE_PROVIDER:-auto}
       DCG_COOKIE_SECURE: ${DCG_COOKIE_SECURE:-false}
-      # El ESP32 virtual llama a este mismo proceso desde dentro del contenedor.
-      DCG_SIM_BASE_URL: http://127.0.0.1:8000
       DCG_DATA_DIR: /data
     volumes:
       - dcg-data:/data          # BD SQLite, claves dev, modelos InsightFace (~300 MB)

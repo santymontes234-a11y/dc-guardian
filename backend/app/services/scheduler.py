@@ -4,7 +4,6 @@
 - Access sweep (``device_sweep_interval_s``, 10 s): session timeouts, unused grants, devices
   without heartbeat → OFFLINE + ``DEVICE_OFFLINE`` alert, undelivered entrance signals →
   EXPIRADA, purge of old nonces.
-- Simulation only: heartbeats of the virtual ESP32 doors (``device_heartbeat_s``).
 The access engine never relies on these loops for its decisions; they keep the state tidy.
 """
 
@@ -67,14 +66,6 @@ async def scheduler_lifespan():
     if s.scheduler_enabled:
         tasks.append(asyncio.create_task(_loop(run_once, s.scheduler_interval_s, "requests")))
         tasks.append(asyncio.create_task(_loop(run_access_sweep, s.device_sweep_interval_s, "access")))
-        if s.simulation:
-            from app.sim import service as sim
-
-            async def _sim_heartbeats():
-                await asyncio.sleep(2)  # let uvicorn start accepting connections
-                await _loop(sim.heartbeat_tick, s.device_heartbeat_s, "sim-heartbeat")
-
-            tasks.append(asyncio.create_task(_sim_heartbeats()))
     try:
         yield
     finally:

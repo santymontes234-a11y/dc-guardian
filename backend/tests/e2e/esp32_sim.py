@@ -1,36 +1,22 @@
 #!/usr/bin/env python3
-"""Virtual ESP32 door for DC Guardian — same signed protocol as the firmware (docs/protocolo-esp32.md).
+"""Protocol client of an ESP32 door for the E2E tests — same signed protocol as the firmware
+(docs/protocolo-esp32.md).
 
-Standard library only, so it runs anywhere:
-
-    python simulator/esp32_sim.py --url http://localhost:8000 --device DC-DOOR-01 \\
-        --secret <hex64> access --uid 04A1B2C3 --distance 30
-
-    python simulator/esp32_sim.py --secret <hex64> env --temp 28.5 --hum 45 --repeat 6
-    python simulator/esp32_sim.py --secret <hex64> env --error
-    python simulator/esp32_sim.py --secret <hex64> entrance --seconds 60
-
-    (the secret may also come from DCG_DEVICE_SECRET)
-
-The same class drives the E2E tests (``backend/tests/e2e``) through a pluggable transport, and
-the web "Simulador" panel through the backend. Like the firmware, it rejects any response
-whose signature or timestamp is invalid (fail-closed) and only "opens" on a signed GRANTED for
-its own session, with a sane ``open_ms`` and local presence.
+Test helper only (standard library): it plays the device side of the HMAC protocol against the
+real gateway through ``ClientTransport`` (FastAPI ``TestClient``). The product has no virtual
+device: the door is the physical ESP32. Like the firmware, it rejects any response whose
+signature or timestamp is invalid (fail-closed) and only "opens" on a signed GRANTED for its
+own session, with a sane ``open_ms`` and local presence.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
-import sys
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 from urllib.parse import parse_qsl, urlencode
@@ -80,21 +66,6 @@ def sign(secret: str, msg: bytes) -> str:
 class Transport(Protocol):
     def request(self, method: str, url: str, headers: dict[str, str], body: bytes) -> tuple[int, dict[str, str], bytes]:
         ...
-
-
-class UrllibTransport:
-    def __init__(self, base_url: str, timeout_s: float = 3.0):
-        self.base_url = base_url.rstrip("/")
-        self.timeout_s = timeout_s
-
-    def request(self, method, url, headers, body):
-        req = urllib.request.Request(self.base_url + url, data=body if method != "GET" else None,
-                                     method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
-                return resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read(4096 + 1)
-        except urllib.error.HTTPError as e:
-            return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read(4096 + 1)
 
 
 class ClientTransport:
@@ -444,91 +415,3 @@ class Esp32Sim:
             return res
         res.outcome = "TIMEOUT"
         return res
-
-
-# Name used by docs/contrato-qr-dht11.md §5.
-SimDevice = Esp32Sim
-
-
-# ------------------------------------------------------------------ CLI
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="ESP32 virtual de DC Guardian")
-    ap.add_argument("--url", default="http://localhost:8000")
-    ap.add_argument("--device", default="DC-DOOR-01")
-    ap.add_argument("--secret", default=os.environ.get("DCG_DEVICE_SECRET"))
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("heartbeat", help="enviar un latido")
-    hb = sub.add_parser("run", help="latidos periódicos hasta Ctrl+C")
-    hb.add_argument("--distance", type=float, default=200)
-    acc = sub.add_parser("access", help="acercarse, pasar la tarjeta y esperar la decisión")
-    acc.add_argument("--uid", required=True)
-    acc.add_argument("--distance", type=float, default=30)
-    acc.add_argument("--timeout", type=int, default=35, help="segundos esperando la decisión")
-    env = sub.add_parser("env", help="enviar una lectura del DHT11 (cada 10 s con --repeat)")
-    env.add_argument("--temp", type=float, help="temperatura °C (omitir con --error)")
-    env.add_argument("--hum", type=float, help="humedad %% (omitir con --error)")
-    env.add_argument("--error", action="store_true", help="simular el sensor en ERROR")
-    env.add_argument("--repeat", type=int, default=1, help="número de envíos (cada 10 s)")
-    ent = sub.add_parser("entrance", help="consultar la señal de la entrada principal (QR) cada segundo")
-    ent.add_argument("--seconds", type=int, default=30, help="segundos consultando")
-    args = ap.parse_args(argv)
-    if args.cmd == "env" and not args.error and (args.temp is None or args.hum is None):
-        ap.error("env: indica --temp y --hum, o --error")
-    if not args.secret:
-        ap.error("falta --secret (o DCG_DEVICE_SECRET)")
-
-    dev = Esp32Sim(args.device, args.secret, UrllibTransport(args.url))
-    try:
-        hb = dev.heartbeat()
-        print(f"heartbeat HTTP {hb.status}: {hb.data}")
-        if args.cmd == "heartbeat":
-            return 0
-        if args.cmd == "env":
-            for i in range(max(1, args.repeat)):
-                if i:
-                    time.sleep(10)
-                try:
-                    r = dev.environment(args.temp, args.hum, "ERROR" if args.error else "OK")
-                    print(f"entorno HTTP {r.status}: {r.data}")
-                except BadResponse as e:
-                    print(f"Respuesta rechazada: respaldo local ({e})", file=sys.stderr)
-                print(f"  ventilador={'ON' if dev.fan else 'OFF'} alarma={'ON' if dev.env_alarm else 'OFF'}"
-                      f"{' (local)' if dev.env_local else ''}")
-            return 0
-        if args.cmd == "entrance":
-            end = time.time() + args.seconds
-            while time.time() < end:
-                try:
-                    r = dev.entrance_poll()
-                    sig = r.data.get("signal")
-                    if sig:
-                        print(f"señal {sig.get('result')} {lcd_text(sig.get('display_name'), 40)} "
-                              f"→ LED {dev.entrance_led}")
-                except BadResponse as e:
-                    print(f"Señal ignorada (fail-closed): {e}", file=sys.stderr)
-                time.sleep(1)
-            return 0
-        if args.cmd == "run":
-            dev.set_distance(args.distance)
-            while True:
-                time.sleep(dev.heartbeat_s)
-                print(f"heartbeat HTTP {dev.heartbeat().status}")
-        dev.set_distance(args.distance)
-        print(f"presencia a {args.distance} cm (umbral {dev.threshold_cm} cm)")
-        res = dev.run_access(args.uid, poll_sleep=True, max_polls=args.timeout * 2)
-    except BadResponse as e:
-        print(f"Respuesta rechazada (fail-closed): {e}", file=sys.stderr)
-        return 2
-    except (urllib.error.URLError, OSError) as e:
-        print(f"Sin conexión con el backend (OFFLINE, puerta cerrada): {e}", file=sys.stderr)
-        return 3
-    except KeyboardInterrupt:
-        return 130
-    for line in res.log:
-        print("  " + line)
-    print(f"Resultado: {res.outcome} {res.reason_code or ''}")
-    return 0 if res.outcome.startswith("GRANTED") else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
